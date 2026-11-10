@@ -1014,10 +1014,12 @@ def test_a_hung_command_is_stopped_with_what_it_started(tmp_path, monkeypatch):
     assert _gone(child), "the hung command's child is still running"
 
 
-def test_a_ctrl_c_while_a_command_starts_stops_what_it_started(tmp_path, monkeypatch):
-    # A Ctrl-C that lands inside Popen, once the child is running but before
-    # Popen returns, used to leave Popen without `p`, so nothing killed the
-    # child (#684). The fake Popen sends the SIGINT at that moment.
+def _ctrl_c_in_popen(tmp_path, monkeypatch, body=None, wait=60.0):
+    """Run doctor's `claude --version`, its fake `claude` given by `body`
+    (by default, one that writes its child's pid to the marker), and press
+    Ctrl-C inside Popen once that pid is written; give the pid. The SIGINT is
+    sent even when the pid never came, so the fake is stopped, but the test
+    then fails saying so: the pid must be there before the signal."""
     import signal
     import time
 
@@ -1025,15 +1027,19 @@ def test_a_ctrl_c_while_a_command_starts_stops_what_it_started(tmp_path, monkeyp
 
     path = _bin(tmp_path, python=None, claude=None)
     marker = tmp_path / "child.pid"
-    _fake(path, "claude", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
+    _fake(path, "claude", body or f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
     real = subprocess.Popen
+    started = []
+
+    def written():
+        return marker.exists() and marker.read_text().strip()
 
     def popen(*a, **kw):
         p = real(*a, **kw)
-        for _ in range(100):
-            if marker.exists() and marker.read_text().strip():
-                break
+        end = time.monotonic() + wait
+        while not written() and p.poll() is None and time.monotonic() < end:
             time.sleep(0.05)
+        started.append(bool(written()))
         os.kill(os.getpid(), signal.SIGINT)
         return p
 
@@ -1046,8 +1052,27 @@ def test_a_ctrl_c_while_a_command_starts_stops_what_it_started(tmp_path, monkeyp
             doctor.check_claude_code(i)
     finally:
         signal.signal(signal.SIGINT, previous)
-    assert marker.read_text().strip(), "the fake never wrote its pid"
-    assert _gone(int(marker.read_text())), "what the command started is still running"
+    assert started == [True], f"the fake never wrote its pid within {wait} s, so Ctrl-C wasn't sent to a running command"
+    return int(marker.read_text())
+
+
+def test_a_ctrl_c_while_a_command_starts_stops_what_it_started(tmp_path, monkeypatch):
+    # A Ctrl-C that lands inside Popen, once the child is running but before
+    # Popen returns, used to leave Popen without `p`, so nothing killed the
+    # child (#684). The fake Popen sends the SIGINT at that moment.
+    assert _gone(_ctrl_c_in_popen(tmp_path, monkeypatch)), "what the command started is still running"
+
+
+def test_a_ctrl_c_while_a_slow_command_starts_waits_for_its_pid(tmp_path, monkeypatch):
+    # A busy machine starts the fake late: the Ctrl-C waits for its pid.
+    sleep, marker = shutil.which("sleep"), tmp_path / "child.pid"
+    pid = _ctrl_c_in_popen(tmp_path, monkeypatch, f"{sleep} 6; {sleep} 30 & echo $! > {marker}; wait")
+    assert _gone(pid), "what the command started is still running"
+
+
+def test_a_ctrl_c_in_popen_test_fails_clearly_when_the_fake_never_wrote_its_pid(tmp_path, monkeypatch):
+    with pytest.raises(AssertionError, match="never wrote its pid"):
+        _ctrl_c_in_popen(tmp_path, monkeypatch, f"exec {shutil.which('sleep')} 30", wait=1)
 
 
 def _gone(pid, seconds=5.0):
