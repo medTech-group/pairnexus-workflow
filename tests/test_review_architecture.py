@@ -72,6 +72,45 @@ def test_the_overview_reaches_the_reviewers_once_through_rules_md():
     assert "grep -vxF docs/architecture/README.md" in text
 
 
+def _copy_command(label: str) -> str:
+    text = _section(PANEL, "## 1. Gather the inputs", "\n## 2.")
+    assert label in text, f"the copy command is written in full after {label!r}"
+    return text.split(label, 1)[1].split("```", 2)[1].strip()
+
+
+def _run_copy(command: str, tmp_path) -> "Path":
+    import subprocess
+
+    project = tmp_path / "project"
+    scratch = tmp_path / "scratch"
+    (project / "docs" / "architecture").mkdir(parents=True)
+    scratch.mkdir()
+    (project / "docs" / "architecture" / "README.md").write_text("# Architecture\n", encoding="utf-8")
+    (project / "docs" / "architecture" / "orders.md").write_text("Covers: src/orders/**\n", encoding="utf-8")
+    printed = "printf 'docs/architecture/README.md\\ndocs/architecture/orders.md\\n'"
+    assert "WF index reads --base origin/<base>" in command
+    command = command.replace("WF index reads --base origin/<base>", printed).replace("<scratch>", str(scratch))
+    run = subprocess.run(["bash", "-c", command], cwd=project, capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    return scratch
+
+
+def test_the_copy_command_is_written_in_full_for_both_cases(tmp_path):
+    # Dropping `grep -vxF …` from the one written command by hand leaves a
+    # pipeline that runs reads.txt as a command, or a syntax error: both forms
+    # are written out, and each copies what it should.
+    text = _section(PANEL, "## 1. Gather the inputs", "\n## 2.")
+    assert "(Without `grep -vxF" not in text
+
+    listed = _run_copy(_copy_command("when `project.rules` lists the overview:"), tmp_path / "listed")
+    assert (listed / "docs" / "architecture" / "orders.md").is_file()
+    assert not (listed / "docs" / "architecture" / "README.md").exists()
+
+    unlisted = _run_copy(_copy_command("When it doesn't:"), tmp_path / "unlisted")
+    assert (unlisted / "docs" / "architecture" / "orders.md").is_file()
+    assert (unlisted / "docs" / "architecture" / "README.md").is_file()
+
+
 def test_every_reviewer_gets_pages_md():
     inputs = _inputs()
     assert "`pages.md`: `WF index pages`'s output" in inputs

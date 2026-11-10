@@ -17,13 +17,19 @@ Make a scratch directory outside the repo, for example `/tmp/review-<ticket>-r<r
 - `diff.patch`: `git diff <base>...HEAD`. The base is the pull request's base branch (the profile's `project.base_branch` unless it targets another), as `origin/<base>` after a `git fetch`.
 - `ticket.md`: the ticket's body and comments, its spec (the issue under "Parent") and the issues they link.
 - `rules.md`: the project's rules, copied from each document in the profile's `project.rules` (safety rules, wording), plus `profile.md`'s sensitive-data and secrets sections.
-- **The architecture pages:** each page `WF index reads --base origin/<base>` prints (a page with no `Covers:` line among them), copied beside `rules.md`, each at its path in the project (`docs/architecture/orders.md` becomes `<scratch>/docs/architecture/orders.md`). The overview (`docs/architecture/README.md`, printed first) reaches them once, through `rules.md`: leave it out of the copy when `project.rules` lists it, and copy it with the pages when it doesn't. From the repository's root:
+- **The architecture pages:** each page `WF index reads --base origin/<base>` prints (a page with no `Covers:` line among them), copied beside `rules.md`, each at its path in the project (`docs/architecture/orders.md` becomes `<scratch>/docs/architecture/orders.md`). The overview (`docs/architecture/README.md`, printed first) reaches them once, through `rules.md`: leave it out of the copy when `project.rules` lists it, and copy it with the pages when it doesn't. From the repository's root, when `project.rules` lists the overview:
 
   ```
   WF index reads --base origin/<base> > <scratch>/reads.txt && grep -vxF docs/architecture/README.md <scratch>/reads.txt | while IFS= read -r f; do mkdir -p "<scratch>/$(dirname "$f")" && cp "$f" "<scratch>/$f"; done
   ```
 
-  (Without `grep -vxF …` when `project.rules` doesn't list the overview.) With no `docs/architecture/` folder it prints nothing, and there is nothing to copy. If it exits non-zero, it says why (a base it can't find, or no merge base in a shallow clone): fetch the base and run it again, and never start the reviewers without the pages it names.
+  When it doesn't:
+
+  ```
+  WF index reads --base origin/<base> > <scratch>/reads.txt && while IFS= read -r f; do mkdir -p "<scratch>/$(dirname "$f")" && cp "$f" "<scratch>/$f"; done < <scratch>/reads.txt
+  ```
+
+  With no `docs/architecture/` folder it prints nothing, and there is nothing to copy. If it exits non-zero, it says why (a base it can't find, or no merge base in a shallow clone): fetch the base and run it again, and never start the reviewers without the pages it names.
 - `pages.md`: `WF index pages`'s output, every page's file, `Covers:`, interface and helpers, so each change sees every interface and every shared helper.
 - `run.md`, in a ticket session:
   - the ticket's area, from its `Area:` line, with that area's globs from the profile's `[areas]`;
