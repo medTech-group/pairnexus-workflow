@@ -19,6 +19,10 @@ Area: <one of the profile's [areas]>
 
 - [ ] <criterion> (seam: <where it's tested>)
 
+## Structural lines
+
+<where its structural lines go, by the overview's rules: the code's page (a cross-cutting rule: the overview), a new module's full page, or for a file no page covers, a small page named by its folder path (`src--orders.md`, `_root.md`)>
+
 ## By-hand checks
 
 <what needs a real device, account or service, or "None">
