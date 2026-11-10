@@ -12,6 +12,7 @@ Prior art: tests/test_planning_review.py and tests/test_build_review_rule.py."""
 
 import re
 
+from changelog_notes import since_0110
 from conftest import KIT
 
 PANEL = "skills/review-panel/SKILL.md"
@@ -318,12 +319,22 @@ def test_planning_brief_and_changelog_say_what_a_planning_pull_request_touches()
         "files no page's `Covers:` names"
     )
     brief = _planning_brief("Correctness", "- **Spec:**")
-    note = _flat(_read("CHANGELOG.md").split("## Unreleased", 1)[1].split("\n## ", 1)[0])
-    note = note.split("**The planning review reads the architecture pages a planning change could contradict**", 1)[1]
-    note = note.split("- **", 1)[0]
-    for text in (brief, note):
+    for text in (brief, _planning_note()):
         assert touches in text
         assert "touches only files under `docs/`" not in text
+
+
+def _planning_note(log: str | None = None) -> str:
+    note = _flat(since_0110(log))
+    note = note.split("**The planning review reads the architecture pages a planning change could contradict**", 1)[1]
+    return note.split("- **", 1)[0]
+
+
+def test_planning_changelog_note_is_found_after_a_release_moves_it():
+    # A release puts its version heading under "## Unreleased" and the notes
+    # under it: the note is still found, read as tests/changelog_notes.py reads.
+    log = _read("CHANGELOG.md").replace("## Unreleased\n", "## Unreleased\n\n## 0.9.9\n", 1)
+    assert "touches only its ADRs, glossary and architecture pages" in _planning_note(log)
 
 
 def test_planning_correctness_reads_every_page_when_the_overview_changes():
