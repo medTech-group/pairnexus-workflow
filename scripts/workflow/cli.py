@@ -1686,7 +1686,7 @@ def cmd_evidence(a) -> int:
     # A bad ref fails before anything runs.
     base_sha = evidence_mod.resolve_ref(root, a.base_ref) if a.base_ref else None
     dirty = evidence_mod.dirty_paths(root) if a.allow_dirty else []
-    changed: list[str] = []  # with --allow-dirty, what changed while the suites ran
+    changed: list[str] = []  # what changed while the suites ran: a tracked file, or with --allow-dirty any
     appeared: list[str] = []  # untracked files that appeared while they ran
     selection = evidence_mod.Selection(None)
     if base_sha and not a.suite and not a.all:

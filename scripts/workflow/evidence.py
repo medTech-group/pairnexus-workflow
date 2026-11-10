@@ -3,8 +3,9 @@
 Runs each suite of the profile in shards against a clean checkout of one
 commit, keeping each shard's result and full output on disk under
 .workflow/evidence/<sha>/, so a container restart re-runs only the unfinished
-shards. After each shard it checks HEAD and the working tree, and stops,
-keeping nothing of that shard, when either changed under it (`collect`). The report names the command, head SHA, counts, duration and each
+shards. After each shard it checks HEAD, and stops, keeping nothing of that
+shard, when it moved; a working tree changed under it makes the report a dirty
+one, kept apart from the commit's (`collect`). The report names the command, head SHA, counts, duration and each
 suite's output tail, the likely cause of a failure, and compares the count
 with the base branch's (given, or run on a worktree of the base), which also
 catches skipped tests. With `commands.select_suites` and a base ref, only the
@@ -340,15 +341,16 @@ def collect(
     commands.setup has written) the tree isn't checked.
 
     After each shard, before its result is kept, the run checks HEAD and the
-    tree (#671). HEAD moved, or a tracked or staged file changed (an edit, a
-    merge of the base left in conflict), stops it with nothing kept for that
-    shard, so a later run on the commit runs it again. A changed tree stops it
-    only where the run can tell the change isn't its own: an untracked file that
-    appears may be the suite's own output (`coverage.xml`), so it is added to
-    `appeared` and the run goes on; the repair commands' writes are taken as the
-    run's own. With allow_dirty the run never stops for the tree: any change
-    (an untracked file included) makes it a dirty run, from that shard on kept
-    under <sha>-dirty, and its paths go in `changed`.
+    tree (#671). HEAD moved stops it with nothing kept for that shard, so a
+    later run on the commit runs it again. A tracked or staged file changed (an
+    edit, a merge of the base left in conflict) makes it a dirty run: the run
+    can't tell a change its suites made from one beside it, so it goes on, and
+    from that shard on keeps its results under <sha>-dirty, never reused, with
+    the paths in `changed` (the report's dirty marker). An untracked file that
+    appears is most likely a suite's own output (`coverage.xml`), so it is
+    added to `appeared` and the run goes on; the repair commands' writes are
+    taken as the run's own. With allow_dirty an untracked file that appears
+    makes it a dirty run too.
     """
     if allow_dirty:
         dirty = dirty_paths(root)
@@ -367,13 +369,11 @@ def collect(
     seen: set[str] = set()
 
     def look() -> None:
-        """Stop, or mark the run dirty, if the tree changed since the last look."""
+        """Mark the run dirty if the tree changed since the last look."""
         nonlocal state, base, fresh
         now = tree_state(root)
         new_files = now[1] - state[1]
         if now[0] != state[0] or (allow_dirty and new_files):
-            if not allow_dirty:
-                raise EvidenceError(_changed_tree(root, dirty))
             if not base.name.endswith("-dirty"):  # from here on, a dirty run: kept apart, never the commit's
                 base, fresh = _dirty_store(store, root, sha), True
             if changed is not None:
@@ -443,16 +443,6 @@ def _dirty_store(store: Path | None, root: Path, sha: str) -> Path:
     shutil.rmtree(base, ignore_errors=True)
     base.mkdir(parents=True, exist_ok=True)
     return base
-
-
-def _changed_tree(root: Path, before: list[str]) -> str:
-    now = [p for p in dirty_paths(root) if p not in before]
-    return (
-        "the working tree changed while the suite ran"
-        + (f" ({_paths(now)})" if now else "")
-        + ", so this run can't prove the commit and stopped; nothing it ran on the changed tree is kept. "
-        "Commit or undo the change, then run it again"
-    )
 
 
 def resolve_ref(root: Path, ref: str) -> str:
@@ -701,8 +691,9 @@ def report(
     wasn't compared, so a base branch with its own failure doesn't block every
     PR (the conductor opens an infra ticket for it instead). `selection` says
     which suites the PR's files needed; with none needed, nothing is compared.
-    `changed` (with --allow-dirty, what changed while it ran) makes it a dirty
-    report too; `appeared` names the untracked files that appeared while it ran."""
+    `changed` (what changed while it ran: a tracked or staged file, or with
+    --allow-dirty any file) makes it a dirty report too; `appeared` names the
+    untracked files that appeared while it ran."""
     by_suite: dict[str, list[ShardResult]] = {}
     for r in results:
         by_suite.setdefault(r.suite, []).append(r)
@@ -722,8 +713,10 @@ def report(
             (
                 f"> The working tree also changed while it ran ({_paths(changed)})."
                 if dirty
-                else f"> **Not a proof of the commit.** Run with --allow-dirty, and the working tree changed while it ran "
-                f"({_paths(changed)}). Use it to try a profile, never for the merge rule."
+                else f"> **Not a proof of the commit.** The working tree changed while it ran ({_paths(changed)}), "
+                "so from then on it didn't test the commit, and never counts for the merge rule. "
+                "If the suites or the `[repair]` commands write them, make them write elsewhere, "
+                "or untrack and git-ignore those files; otherwise leave the checkout alone while it runs."
             ),
             "",
         ]
