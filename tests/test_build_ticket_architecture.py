@@ -152,7 +152,9 @@ def test_flow_2_item_2_says_where_a_structural_line_goes():
     assert "a new folder of code, its full page" not in s
     # answers 30, 32 and 33: the small page, `--`, no leading dot, `_root.md`
     assert "a file no page covers, a `Covers:` line in the page named by its folder path" in s
-    assert "`.a/b/c.py`: `a--b.md`" in s
+    # an everyday path, as the overview's template gives it, not a placeholder
+    assert "`.tools/lint/check.py`: `tools--lint.md`" in s
+    assert "`.a/b/c.py`" not in s
     assert "`_root.md`" in s
 
 

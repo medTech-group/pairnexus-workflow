@@ -36,7 +36,7 @@ A large effort can start as a **map**: an issue labelled `wayfinder:map` whose c
    - an `Area: <name>` line from the profile's `[areas]`, so the conductor never runs two sessions on one area;
    - acceptance criteria naming their seams;
    - the by-hand checks it will need (a real device, account or service), if any;
-   - where its structural lines go: its page, or the overview for a cross-cutting rule; a new module (a new folder of code that no page covers and that held no code before), a full page for the outermost one; a file no page covers, a `Covers:` line in the page named by its folder path (`.a/b/c.py`: `a--b.md`; root: `_root.md`);
+   - where its structural lines go: its page, or the overview for a cross-cutting rule; a new module (a new folder of code that no page covers and that held no code before), a full page for the outermost one; a file no page covers, a `Covers:` line in the page named by its folder path (`.tools/lint/check.py`: `tools--lint.md`; root: `_root.md`);
    - `Review: small` if the change should stay within the small threshold and add no endpoint, table, screen or setting (§3);
    - `## Bar`, required in a `run.bar_areas` area ("The bar").
 3. Anything only the owner can do (create an account, a key, a domain) is its own issue labelled `owner-task` (or `ready-for-human`), and blocks what needs it.
