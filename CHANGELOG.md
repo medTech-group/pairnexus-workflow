@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**A spec's tickets wait for its architecture pull request from the moment they are published** (#647, part of spec #611, split out of #617). A spec session published its build tickets (flow §2 item 2) before it opened the pull request of what it wrote (item 7), so a run could build a ticket before the architecture lines it is reviewed against had merged.
+
+- **The flow:** §2 item 7 commits the spec session's architecture lines with its glossary and ADRs, on their own branch. With architecture lines, that pull request opens as a draft before the tickets are published, and until it merges every session's tickets name it in `## Blocked by` (a later session's too, after one that stopped at the spec), so `workflow ready` lists none before it merges; the planning review still comes before it is offered. Item 2's `## Blocked by` part and §2's checklist say the same.
+- **`start`:** its "Then publish" names the architecture pull request in each new ticket's `## Blocked by` while it is unmerged, whichever session opened it, so the "Breakdown to publish" post names it too; when the session's architecture lines are in no pull request yet, it opens it as a draft before that post, which names it by its number, so a session carrying on from the post publishes it as posted.
+- **Room for it:** other §2 text is shorter (item 5's aside on CI config, which item 4 already covers, and its words on starting first; item 4's repeat of the owner-task label, which item 3 gives; item 7's note on a cloud session's files; item 1's words on why a spec links from its map; a "too" in item 2), and the first flow context's budget is unchanged (8,900): §1 and §2 still reach someone new whole beside the glossary's rule up to a 220-character project path (283 before, 219 kept). Tests: `tests/test_spec_architecture_blocker.py`.
+- **For projects updating:** nothing to do.
+
 **Set-up and the kit's update write the architecture overview** (#618, part of spec #611). The overview's template shipped with #612, but nothing wrote it into a project, so its rules reached no session or reviewer.
 
 - **`setup-workflow`** (step 3, item 1) writes `docs/architecture/README.md` from `templates/architecture-overview.md` and adds `"docs/architecture/README.md"` to `project.rules`, after the project's own rule documents.
