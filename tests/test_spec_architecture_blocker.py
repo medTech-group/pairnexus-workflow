@@ -96,21 +96,37 @@ def test_start_names_the_architecture_pull_request_whichever_session_opened_it()
     assert 'is published as "Then publish" says' in settle
 
 
-def test_start_opens_the_draft_only_for_lines_in_no_pull_request_yet():
+def _post():
+    """The sentence of "Then publish" that posts "Breakdown to publish"."""
+    (post,) = [s for s in re.split(r"(?<=[.;])\s+", _publish()) if '"Breakdown to publish"' in s]
+    return post
+
+
+def test_start_opens_the_draft_before_the_post_only_for_lines_in_no_pull_request_yet():
     publish = _publish()
-    opens = "If the session's architecture lines are in no pull request yet, open the architecture pull request as a draft."
-    assert opens in publish
+    opens = "after opening the architecture pull request as a draft if the session's architecture lines are in no pull request yet"
+    # opened before the "Breakdown to publish" post, so the post holds its
+    # number and a session carrying on from the post publishes it as posted
+    assert opens in _post()
     # a session carrying on, or one publishing after an earlier session opened
-    # it, never opens a second one; the first opens it before any ticket
+    # it, never opens a second one; never in the numbered steps after the post
     assert publish.count("as a draft") == 1
-    assert publish.index(opens) < publish.index("Publish the new build tickets")
+    assert publish.index(opens) < publish.index("Then, in this order:")
 
 
 def test_start_s_publish_order_has_one_first_step():
     publish = _publish()
-    # the post comes first; the draft opens in the numbered steps after it
+    # the draft opens within the first step, the post's own sentence, never as
+    # a step before it
     assert "before anything else" not in publish
-    assert publish.index("First post") < publish.index("Then, in this order:") < publish.index("as a draft")
+    assert _post().startswith("First post")
+    assert publish.index("as a draft") > publish.index("First post")
+
+
+def test_the_post_names_the_architecture_pull_request_by_its_number():
+    # never by a title still to swap: a session carrying on publishes the
+    # post exactly as posted, with no pull request of its own to open
+    assert "and the architecture pull request by its number" in _post()
 
 
 def test_start_calls_it_the_architecture_pull_request():
