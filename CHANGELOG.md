@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**A Ctrl-C during `workflow status`'s own `git` calls stops it quietly, with nothing left running** (#689).
+
+- **`workflow status`:** a Ctrl-C while it ran one of its own `git` calls (the tracked files it counts, and the base's profile it reads for who writes code) gave a `KeyboardInterrupt` traceback (exit -2) rather than `workflow status: stopped` (exit 130), and left whatever that `git` had started running. A Ctrl-C anywhere in `workflow status` is now the quiet stop, and those `git` calls run as doctor's commands do: in a session of their own, whose whole process group is killed when the wait ends (a timeout or a Ctrl-C).
+- **One runner:** doctor's way of running a command (#684) moved into `scripts/workflow/proc.py`, which doctor, `workflow status` and the profile's `git` reads now share, so the profile check's `git` calls (#690) go through it too.
+- **For projects updating:** nothing to do.
+
 **Ctrl-C while doctor starts a command no longer leaves it running, and the Ctrl-C tests no longer fail on a busy machine** (#684).
 
 - **`workflow doctor` and `workflow status`:** a Ctrl-C that came while doctor was starting `claude --version`, `python3`, `gh` or `git` (inside `subprocess.Popen`, once the command was already running) left that command, and whatever it had started, running after the quiet stop. The Ctrl-C is now held until the command has started, then stops it as any other Ctrl-C does: its whole process group is killed, and the run ends with exit 130.

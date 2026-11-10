@@ -7,11 +7,11 @@ checkout: whether the kit is set up, and whether the project is brand new.
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import issues as issues_mod
+from . import proc as proc_mod
 from .profile import EXPERIENCE_ENV, EXPERIENCE_FILE, Experience
 
 # A request recorded by the guided start, one issue per item, so a plan made in
@@ -93,14 +93,11 @@ class Status:
 
 def own_files(root: Path) -> int:
     """Tracked files that are the project's own, not set-up's or boilerplate."""
-    try:
-        p = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired):
-        return -1
-    if p.returncode:
+    tracked = proc_mod.output(["git", "ls-files", "-z"], cwd=root, timeout=20)
+    if tracked is None:
         return -1
     n = 0
-    for path in filter(None, p.stdout.split("\0")):
+    for path in filter(None, tracked.split("\0")):
         if path.startswith(_BOILERPLATE_DIRS) or _BOILERPLATE.match(path):
             continue
         n += 1

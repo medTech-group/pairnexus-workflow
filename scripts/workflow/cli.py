@@ -289,7 +289,17 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
 
 def cmd_status(a) -> int:
     """Where the project stands, for the guided start (`skills/start`), with
-    doctor's local gaps (#62): its local checks only, so no network call."""
+    doctor's local gaps (#62): its local checks only, so no network call.
+    A Ctrl-C anywhere in it is a quiet stop, as doctor's (#689): the commands
+    it runs through `proc` have their process group killed first."""
+    try:
+        return _status(a)
+    except KeyboardInterrupt:
+        print("workflow status: stopped", file=sys.stderr)
+        return 130
+
+
+def _status(a) -> int:
     root = project_root()
     prof, error = _read_profile(root)
     issues = prs = None
@@ -305,14 +315,10 @@ def cmd_status(a) -> int:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
         issues, prs = _json(a.issues), _json(a.prs)
     experience = resolve_experience(root, prof.experience if prof else None)
-    try:
-        local = doctor_mod.report(
-            doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
-            doctor_mod.LOCAL_CHECKS,
-        )
-    except KeyboardInterrupt:  # Ctrl-C while `python3` runs: a quiet stop, as doctor's
-        print("workflow status: stopped", file=sys.stderr)
-        return 130
+    local = doctor_mod.report(
+        doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
+        doctor_mod.LOCAL_CHECKS,
+    )
     st = status_mod.snapshot(
         root,
         prof is not None or error is not None,

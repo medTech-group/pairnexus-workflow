@@ -1023,7 +1023,7 @@ def _ctrl_c_in_popen(tmp_path, monkeypatch, body=None, wait=60.0):
     import signal
     import time
 
-    from workflow import doctor
+    from workflow import doctor, proc
 
     path = _bin(tmp_path, python=None, claude=None)
     marker = tmp_path / "child.pid"
@@ -1043,7 +1043,7 @@ def _ctrl_c_in_popen(tmp_path, monkeypatch, body=None, wait=60.0):
         os.kill(os.getpid(), signal.SIGINT)
         return p
 
-    monkeypatch.setattr(doctor.subprocess, "Popen", popen)
+    monkeypatch.setattr(proc.subprocess, "Popen", popen)
     i = _inputs(tmp_path, environ={"PATH": str(path), "HOME": str(tmp_path)})
     # Ctrl-C raises KeyboardInterrupt here even where pytest was started ignoring it.
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -1102,7 +1102,7 @@ def test_a_command_that_cant_be_started_gives_back_the_ctrl_c_handler(tmp_path):
 def test_a_ctrl_c_while_a_start_fails_stops_the_run(tmp_path, monkeypatch):
     import signal
 
-    from workflow import doctor
+    from workflow import doctor, proc
 
     real = subprocess.Popen
 
@@ -1110,7 +1110,7 @@ def test_a_ctrl_c_while_a_start_fails_stops_the_run(tmp_path, monkeypatch):
         os.kill(os.getpid(), signal.SIGINT)
         return real(*a, **kw)  # raises OSError: the interpreter isn't there
 
-    monkeypatch.setattr(doctor.subprocess, "Popen", popen)
+    monkeypatch.setattr(proc.subprocess, "Popen", popen)
     i = _unstartable(tmp_path)
     # Ctrl-C raises KeyboardInterrupt here even where pytest was started ignoring it.
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
