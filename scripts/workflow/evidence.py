@@ -350,7 +350,8 @@ def collect(
     from that shard on keeps its results under <sha>-dirty, never reused, with
     the paths in `changed` (the report's dirty marker). An untracked file that
     appears is most likely a suite's own output (`coverage.xml`), so it is
-    added to `appeared` and the run goes on. What changes while the repair
+    added to `appeared` and the run goes on, keeping what runs from that shard
+    on under <sha>-dirty too, since it may have changed the result. What changes while the repair
     commands run counts the same way. With allow_dirty an untracked file that
     appears makes it a dirty run too.
     """
@@ -373,13 +374,13 @@ def collect(
     seen: set[str] = set()
 
     def look() -> None:
-        """Mark the run dirty if the tree changed since the last look."""
+        """Mark the run dirty, or name the new files, if the tree changed since the last look."""
         nonlocal state, base, fresh
         now = tree_state(root)
         new_files = now[1] - state[1]
+        if (now[0] != state[0] or new_files) and not base.name.endswith("-dirty"):
+            base, fresh = _dirty_store(store, root, sha), True  # from here on, kept apart: never the commit's
         if now[0] != state[0] or (allow_dirty and new_files):
-            if not base.name.endswith("-dirty"):  # from here on, a dirty run: kept apart, never the commit's
-                base, fresh = _dirty_store(store, root, sha), True
             if changed is not None:
                 cur = set(dirty_paths(root))
                 changed[:] = sorted(set(changed) | (cur - set(dirty) or cur))

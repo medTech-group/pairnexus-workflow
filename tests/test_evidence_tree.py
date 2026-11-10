@@ -138,6 +138,38 @@ def test_an_untracked_file_that_appears_mid_run_is_named_in_the_report(tmp_path,
     assert "NOT A PROOF" not in out.splitlines()[0]
 
 
+def test_shards_run_beside_a_file_that_appeared_are_never_reused(tmp_path, monkeypatch, capsys):
+    # A file added beside the run (here `skip`, which makes the suite pass) may
+    # be named in the report, but what ran beside it is never the commit's.
+    root = _repo(tmp_path, run="if [ -f skip ]; then echo 1 passed; else python3 run_tests.py {files}; fi")
+    (root / "tests/test_1.txt").write_text("fail")
+    git(root, "commit", "-qam", "test_1 fails")
+    _act(root, "tests/test_0.txt", "touch skip")
+    assert _evidence(monkeypatch, root) == 0
+    assert "`skip`" in capsys.readouterr().out
+    (root / "skip").unlink()
+    assert _evidence(monkeypatch, root) == 1
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == evidence.headline(_sha(root), False) and "`skip`" not in out
+
+
+def test_a_later_suite_run_beside_a_file_that_appeared_runs_again(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path)
+    prof = root / ".claude/workflow/profile.toml"
+    prof.write_text(
+        prof.read_text().replace('files = "tests/test_*.txt"', 'files = "tests/test_0.txt"')
+        + '[[commands.suite]]\nname = "py"\n'
+        + 'run = "if [ -f pyt/conftest.py ]; then echo 1 passed; else echo 1 failed; exit 1; fi"\n'
+    )
+    git(root, "commit", "-qam", "two suites")
+    _act(root, "tests/test_0.txt", "mkdir -p pyt && touch pyt/conftest.py")
+    assert _evidence(monkeypatch, root) == 0
+    assert "`pyt/conftest.py`" in capsys.readouterr().out
+    (root / "pyt/conftest.py").unlink()
+    assert _evidence(monkeypatch, root) == 1  # the `py` shard runs again, without the file
+    assert capsys.readouterr().out.splitlines()[0] == evidence.headline(_sha(root), False)
+
+
 # ---------- 2. an interrupted shard is never reused ----------
 
 
