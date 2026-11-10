@@ -52,7 +52,10 @@ def test_item_7_commits_the_architecture_lines_with_the_glossary_and_adrs():
 def test_item_7_opens_the_pull_request_before_the_tickets_are_published():
     item = _item(7, "**Checklist:**")
     # opened as a draft before item 2 publishes, so the tickets name it from the start
-    assert "open it as a draft before item 2 publishes, named in each ticket's `## Blocked by`" in item
+    assert "With architecture lines, open it as a draft before item 2 publishes" in item
+    # and named by every ticket published while it is unmerged, by this session
+    # or a later one (a spec session that stopped before its tickets, say)
+    assert "until it merges, every session's tickets name it in `## Blocked by`" in item
     # the planning review still comes before it is offered (marked ready)
     assert "planning review as §1 does before it is offered" in item
     assert item.index("as a draft before item 2 publishes") < item.index("planning review")
@@ -70,16 +73,51 @@ def test_the_checklist_has_a_line_for_it():
 # --- start's publish, which a spec session follows ---------------------------
 
 
-def test_start_opens_the_draft_and_names_it_before_publishing_the_tickets():
+def _publish():
     start = _flat(_read("skills/start/SKILL.md"))
-    publish = start.split("**Then publish.**", 1)[1].split("4. Comment \"Breakdown published\"", 1)[0]
-    step = "With architecture lines, open the session's pull request as a draft before anything else here (flow §2 item 7)"
-    assert step in publish
-    assert "name it in each new ticket's `## Blocked by`" in publish
-    # before the tickets are published, and before the post of what will be
-    # published, so that post (which a session carrying on publishes from as is)
-    # names it too
-    assert publish.index(step) < publish.index("Breakdown to publish") < publish.index("Publish the new build tickets")
+    return start.split("**Then publish.**", 1)[1].split("4. Comment \"Breakdown published\"", 1)[0]
+
+
+def test_start_names_the_architecture_pull_request_whichever_session_opened_it():
+    publish = _publish()
+    names = (
+        "Each new ticket's `## Blocked by` names the architecture pull request (flow §2 item 7) "
+        "while it is unmerged, whichever session opened it, so none is ready before it merges."
+    )
+    # a session publishing tickets for a spec whose lines an earlier session
+    # wrote and offered ("Stop here") names that pull request too
+    assert names in publish
+    # in the post of what will be published, which a session carrying on
+    # publishes from as is
+    assert publish.index(names) < publish.index("Breakdown to publish")
+    # a held-back ticket's settle publishes its new tickets the same way
+    start = _flat(_read("skills/start/SKILL.md"))
+    settle = start.split("**Settling a held-back ticket.**", 1)[1].split(" 4. **Commit what the session wrote,**", 1)[0]
+    assert 'is published as "Then publish" says' in settle
+
+
+def test_start_opens_the_draft_only_for_lines_in_no_pull_request_yet():
+    publish = _publish()
+    opens = "If the session's architecture lines are in no pull request yet, open the architecture pull request as a draft."
+    assert opens in publish
+    # a session carrying on, or one publishing after an earlier session opened
+    # it, never opens a second one; the first opens it before any ticket
+    assert publish.count("as a draft") == 1
+    assert publish.index(opens) < publish.index("Publish the new build tickets")
+
+
+def test_start_s_publish_order_has_one_first_step():
+    publish = _publish()
+    # the post comes first; the draft opens in the numbered steps after it
+    assert "before anything else" not in publish
+    assert publish.index("First post") < publish.index("Then, in this order:") < publish.index("as a draft")
+
+
+def test_start_calls_it_the_architecture_pull_request():
+    # the same name as flow §2 item 2 and the checklist
+    publish = _publish()
+    assert "the session's pull request" not in publish
+    assert "the architecture pull request" in publish
 
 
 # --- the part working --------------------------------------------------------
