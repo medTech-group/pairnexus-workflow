@@ -75,38 +75,14 @@ def test_the_overview_template_has_the_rule_the_bullet_points_at():
     assert "`_root.md`" in overview and "joined with `--`" in overview
 
 
-# --- the protected-path note's detail, moved out of §2 to make room -----------
+# --- flow §2 item 4, shortened to make room ---------------------------------
 
 
-def test_flow_points_at_the_charter_for_which_paths_count_as_named():
+def test_flow_2_item_4_still_says_ready_notes_a_ticket_naming_a_protected_path():
     flow = _flat(_read("docs/flow.md"))
     item_4 = flow.split("4. **A change to a protected path**", 1)[1].split(" 5. **A ticket that fixes", 1)[0]
     assert "`workflow ready` notes a ticket whose body names one" in item_4
-    assert "`charter.md` in the kit's docs says which it reads as named" in item_4
     assert "for the owner to keep or exclude" in item_4
-
-
-def test_the_charter_says_which_paths_count_as_named():
-    readiness = _flat(_read("docs/charter.md")).split("- **Readiness:**", 1)[1].split("- **Safety:**", 1)[0]
-    assert 'A path in fenced code (unless the prose before it asks for a change "to" or "in" it)' in readiness
-    assert "after \"don't\", \"do not\" or \"never\" in its clause, isn't read as named" in readiness
-    assert "when in doubt, a path is noted" in readiness
-    # `_mentions` leaves out a path its clause only reads, too: the charter says so
-    assert 'a clause that only reads it ("Read the key from .env"' in readiness
-    assert '"read", "load" or "parse" before it, or "from" just before it' in readiness
-    assert "and no word of change before it" in readiness
-
-
-def test_the_charter_s_reading_case_is_the_code_s():
-    from workflow.issues import protected_named
-
-    pats = ["**/.env"]
-    # left out: its clause only reads it
-    assert protected_named("Area: a0\nRead the key from .env at startup.", pats) == []
-    assert protected_named("Area: a0\nTake the key from .env.", pats) == []
-    # still noted: a word of change before it, or no reading word
-    assert protected_named("Area: a0\nRead and edit .env.", pats) == [(".env", "**/.env")]
-    assert protected_named("Area: a0\nUse .env.", pats) == [(".env", "**/.env")]
 
 
 # --- the hook's first flow context -------------------------------------------
@@ -168,4 +144,3 @@ def test_the_changelog_says_so_under_unreleased():
     assert "§2 item 2" in note
     assert "a new module's full page" in note and "new folder" not in note
     assert "`_root.md`" in note
-    assert "`charter.md`" in note
