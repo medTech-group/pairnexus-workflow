@@ -233,6 +233,20 @@ def test_planning_review_gets_pages_md_and_the_read_pages():
     assert "a new page that contradicts an existing one" in planning
 
 
+def test_planning_correctness_reads_the_pages_a_new_or_changed_page_overlaps():
+    # `reads` matches changed files against `Covers:`, and a planning pull
+    # request changes only files under docs/: a new page covering
+    # src/orders/refund.py never brings orders.md (src/orders/**) with it.
+    # So the Correctness brief reads, in the repo, each page whose `Covers:`
+    # in pages.md overlaps those of a page the pull request adds or changes.
+    planning = _planning()
+    brief = planning.split("- **Correctness:**", 1)[1].split("- **Spec:**", 1)[0]
+    assert (
+        "for each page the pull request adds or changes, read in the repo every page `pages.md` lists "
+        "whose `Covers:` could match a file that page's `Covers:` matches"
+    ) in brief
+
+
 # --- ADR 0001 -----------------------------------------------------------------
 
 
