@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A ticket session's evidence never holds the merge when no check is waived** (#663). `build-ticket` §6 and the briefing's **Merging** lines listed "post the evidence" before `merge-check`, so sessions held a ready pull request for the 40-minute evidence run while it fell behind or started conflicting with the base. With no required check waived and the profile not `ci.none` (where flow §4 item 2 only recommends the report), the session now starts `workflow evidence` as a tracked background task once the review is clean, runs `merge-check` and queues, merges or arms auto-merge on `ready` without waiting for it, and posts the report when it ends, naming the head it covers. With a check waived on the head (`merge-check`'s `waived` note) or `ci.none`, the report still comes first, run with `--all`, and `merge-check` counts it; a check the charter waives that hasn't been waived yet doesn't hold the merge, though the run starts with `--all`. The briefing's line is a new value, `{{merge.evidence}}`, rendered for each case.
+
+- **For projects updating:** nothing to do. A project with its own copy of `ticket-session-prompt.md` keeps its old line until it takes `{{merge.evidence}}`.
+
 **Flow §2 says where a ticket's structural lines go** (#646, part of spec #611). A planning session wrote build tickets without saying where their structural choices would be written, and the flow's §1 and §2 had about 8 characters to spare in the context hook's first flow context, so any added line would have pushed §2 out of a planning session's first context.
 
 - **The flow:** §2 item 2's list of what a build ticket has gains where its structural lines go, by the architecture overview's rules: the code's page (a cross-cutting rule: the overview), a new module's full page, or, for a file no page covers, a small page named by its folder path (`src--orders.md`, `_root.md`). `start`'s quick ticket, and the ticket it drafts when sorting an issue, list the same part, and the Build ticket template gains a `## Structural lines` section for it.
