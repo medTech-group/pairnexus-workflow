@@ -9,6 +9,16 @@
 - **Its Spec reviewer** reads a spec session's architecture lines against the owner's answers, with its ADRs and glossary. ADR 0001 lists architecture lines among what planning reviews cover.
 - **For projects updating:** nothing to do. A project without `docs/architecture/` gives its planning review no pages.
 
+**Doctor notes what the architecture doesn't describe** (#615, part of spec #611). With a `docs/architecture/` folder, `workflow doctor` gains three notes in "The kit" group, each a `fine` line when nothing is wrong:
+
+- `kit.architecture.uncovered`: code no page's `Covers:` line matches, with its count and the first 10 files. Code is `guard.code_paths` when set, else every tracked file outside `docs/`; either way never a protected path, a file at the project's root, a `project.rules` document or a test path (`guard.test_paths`). Code written before the architecture stays a note until the architecture pass writes its pages.
+- `kit.architecture.unmatched`: a page whose `Covers:` lines match no file tracked in git.
+- `kit.architecture.no_covers`: a page with no `Covers:` line, which every change reads until it has one.
+
+The overview (`docs/architecture/README.md`) is never a page: its `Covers:` lines cover nothing, and it gets no note. No folder, no lines. The notes read only the checkout (`git ls-files`), and `workflow status` never runs them. The old-Python short report gives the same ids. `workflow profile check` warns when `guard.protected_paths`, or `guard.code_paths` under `code_writers = "ticket"`, matches `docs/architecture/`, since sessions then can't write its lines.
+
+- **For projects updating:** nothing to do. A project with a `docs/architecture/` folder may see the new notes; they never block.
+
 **The review panel reads the architecture** (#616, part of spec #611). Reviewers could hold a change only to `project.rules`, and the Standards reviewer looked for duplicated code only in the change itself, so a copy of a check that already existed elsewhere passed as a preference no written rule backs.
 
 - **The panel's inputs** (`review-panel` §1) gain the architecture pages `workflow index reads --base origin/<base>` prints, copied into the scratch directory at their paths, with the overview reaching every reviewer once, through `rules.md`; `pages.md`, `workflow index pages`' list of every page's interface and helpers; and, in a ticket session, `run.md`: the ticket's area and its globs, what runs alongside it and the protected paths.
