@@ -59,7 +59,8 @@ class Status:
     # (the `study` skill's section 5). Never to sort.
     research: list[Item] = field(default_factory=list)
     # Items whose `## Blocked by` names an open owner task (#514): skipped by
-    # `next` and `start` while it's open. A map keeps its own section.
+    # `next` and `start` while it's open. A map keeps its own section, and an
+    # item already waiting on a person stays under waiting (#577).
     held: list[Item] = field(default_factory=list)
     prs: list[Item] = field(default_factory=list)
     planned: list[Item] = field(default_factory=list)
@@ -129,10 +130,11 @@ def _children(i: dict) -> tuple[int, int] | None:
 def owner_tasks_holding(issue: dict, by_num: dict[int, dict], repo: str | None = None) -> list[int]:
     """The open owner tasks among the issue's blockers, in the order its
     `## Blocked by` names them. A blocker missing from `by_num`, closed, in
-    another repository or not an owner task holds nothing here."""
+    another repository or not an owner task holds nothing here, and nor does
+    the issue itself (#577)."""
     out = []
     for b in issues_mod.blockers_of(issue.get("body"), repo):
-        bi = by_num.get(b) if isinstance(b, int) else None
+        bi = by_num.get(b) if isinstance(b, int) and b != issue.get("number") else None
         if bi is not None and _open(bi) and issues_mod.labels_of(bi) & issues_mod.OWNER_TASK_LABELS:
             out.append(b)
     return out
@@ -179,12 +181,7 @@ def snapshot(
             continue
         is_spec = "spec" in labels or title.strip().casefold().startswith("spec:")
         path = item_path(body)
-        tasks = owner_tasks_holding(i, by_num, repo)
-        if tasks:
-            # Held until the owner task closes (#514).
-            word = "owner task" if len(tasks) == 1 else "owner tasks"
-            st.held.append(Item(n, title, f"{word} " + ", ".join(f"#{t}" for t in tasks)))
-            continue
+        # The item's own section, then held over it (#514), unless it already waits on a person (#577).
         if is_spec or (kids and kids[0]):
             kind = "" if is_spec else "parent issue, "
             if kids is None:
@@ -193,24 +190,28 @@ def snapshot(
                 detail = "no tickets yet"
             else:
                 detail = f"{kids[1]} of {kids[0]} tickets open"
-            st.specs.append(Item(n, title, kind + detail))
-            continue
-        if path is not None:
-            st.planned.append(Item(n, title, path))
-            continue
-        if labels & _WAITING:
-            st.waiting.append(Item(n, title, ", ".join(sorted(labels & _WAITING))))
-            continue
-        if issues_mod.CARRY_ON_LABEL in labels:
+            where, item = st.specs, Item(n, title, kind + detail)
+        elif path is not None:
+            where, item = st.planned, Item(n, title, path)
+        elif labels & _WAITING:
+            where, item = st.waiting, Item(n, title, ", ".join(sorted(labels & _WAITING)))
+        elif issues_mod.CARRY_ON_LABEL in labels:
             # Handed on, review not yet clean: `start` offers "Carry on" (#376). One claimed is listed
             # as claimed only (a run adopted it, #380).
-            if issues_mod.CLAIM_LABEL not in labels:
-                st.carry_on.append(Item(n, title))
-            continue
-        if issues_mod.READY_LABEL in labels:
-            continue  # a build ticket: readiness below
-        if "needs-triage" in labels or not labels:
-            st.to_triage.append(Item(n, title))
+            where, item = (None if issues_mod.CLAIM_LABEL in labels else st.carry_on), Item(n, title)
+        elif issues_mod.READY_LABEL in labels:
+            where, item = None, None  # a build ticket: readiness below
+        elif "needs-triage" in labels or not labels:
+            where, item = st.to_triage, Item(n, title)
+        else:
+            where, item = None, None  # listed nowhere of its own
+        tasks = [] if where is st.waiting else owner_tasks_holding(i, by_num, repo)
+        if tasks:
+            # Held until the owner task closes (#514).
+            word = "owner task" if len(tasks) == 1 else "owner tasks"
+            st.held.append(Item(n, title, f"{word} " + ", ".join(f"#{t}" for t in tasks)))
+        elif where is not None:
+            where.append(item)
     for pr in sorted((p for p in prs if _open(p)), key=lambda p: p["number"]):
         draft = " (draft)" if pr.get("draft") else ""
         st.prs.append(Item(pr["number"], pr.get("title") or "", ((pr.get("head") or {}).get("ref") or "") + draft))
