@@ -3,9 +3,10 @@
 Runs each suite of the profile in shards against a clean checkout of one
 commit, keeping each shard's result and full output on disk under
 .workflow/evidence/<sha>/, so a container restart re-runs only the unfinished
-shards. After each shard it checks HEAD, and stops, keeping nothing of that
-shard, when it moved; a working tree changed under it makes the report a dirty
-one, kept apart from the commit's (`collect`). The report names the command, head SHA, counts, duration and each
+shards. After each shard it checks the working tree, then HEAD: a moved HEAD
+stops it, keeping nothing of that shard; a changed tree keeps what runs from
+then on apart from the commit's, and a changed tracked file makes the report a
+dirty one (`collect`). The report names the command, head SHA, counts, duration and each
 suite's output tail, the likely cause of a failure, and compares the count
 with the base branch's (given, or run on a worktree of the base), which also
 catches skipped tests. With `commands.select_suites` and a base ref, only the
@@ -352,8 +353,8 @@ def collect(
     Without clean_check (the base worktree, fresh from git, where only
     commands.setup has written) the tree isn't checked.
 
-    After each shard, before its result is kept, the run checks HEAD and the
-    tree (#671). HEAD moved stops it with nothing kept for that shard, so a
+    After each shard, before its result is kept, the run checks the tree and
+    then HEAD (#671). HEAD moved stops it with nothing kept for that shard, so a
     later run on the commit runs it again. A tracked or staged file changed (an
     edit, a merge of the base left in conflict) makes it a dirty run: the run
     can't tell a change its suites made from one beside it, so it goes on, and
@@ -361,9 +362,9 @@ def collect(
     the paths in `changed` (the report's dirty marker). An untracked file that
     appears is most likely a suite's own output (`coverage.xml`), so it is
     added to `appeared` and the run goes on, keeping what runs from that shard
-    on under <sha>-dirty too, since it may have changed the result. What changes while the repair
-    commands run counts the same way. With allow_dirty an untracked file that
-    appears makes it a dirty run too.
+    on under <sha>-dirty too, since it may have changed the result. What
+    changes while the repair commands run counts the same way. With allow_dirty
+    an untracked file that appears makes it a dirty run too.
     """
     if allow_dirty:
         dirty = dirty_paths(root)

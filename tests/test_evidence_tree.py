@@ -457,3 +457,14 @@ def test_the_dirty_store_is_one_helper_listed_in_its_page(tmp_path):
     d = evidence._dirty_store(None, tmp_path, "abc")
     assert d == old and d.is_dir() and not any(d.iterdir())  # emptied: never reused
     assert evidence._dirty_store(tmp_path / "s", tmp_path, "abc") == tmp_path / "s/abc-dirty"
+
+
+def test_the_pages_rule_says_what_each_check_does():
+    page = (ROOT / "docs/architecture/scripts--workflow.md").read_text()
+    rule = page.split("\n## Rules\n", 1)[1]
+    # True for the code: the base branch's worktree is checked only for a moved
+    # head, the repair's window is checked like a shard's, and a changed tree
+    # keeps what ran apart rather than stopping the run.
+    for words in ("base branch's worktree", "only for a moved head", "`[repair]`", "`<sha>-dirty`", "never reused"):
+        assert words in rule, words
+    assert "either stops the run" not in rule
