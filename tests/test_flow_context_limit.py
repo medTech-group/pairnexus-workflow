@@ -147,7 +147,7 @@ def test_a_flow_that_fits_whole_is_never_cut(tmp_path):
 
 
 def test_an_opening_too_long_for_the_budget_leaves_the_instruction_alone(repo):
-    (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n" + "x" * 9_000 + "\n\n## 1. Build\n\nTests first.\n")
+    (repo / ".claude/workflow/flow.md").write_text("# The flow\n\n" + "x" * FLOW_BUDGET + "\n\n## 1. Build\n\nTests first.\n")
     ctx = _ctx(repo, "implement #5", env={"WORKFLOW_EXPERIENCE": "developer"})
     assert "read it now, all of it" in ctx.lower() and "below" not in ctx and "\n" not in ctx
 
