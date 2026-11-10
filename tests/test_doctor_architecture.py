@@ -322,6 +322,17 @@ def test_doctor_output_when_git_fails(tmp_path):
             assert str(home) not in said and str(tmp_path) not in said
 
 
+def test_a_git_stopped_by_a_signal_is_said_plainly(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    got = _lines(root, environ=_fake_git(tmp_path, "#!/bin/sh\nkill -9 $$\n"))
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        assert "exited with code" not in _said(ln) and "git said" not in _said(ln)
+        assert "(git failed and said nothing)" in ln.message.new
+        assert "(git failed and said nothing)" in ln.message.developer
+
+
 def test_without_git_the_walk_cant_check_and_the_pages_are_still_read(tmp_path):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/later.md": "# Later\n"})
     got = _lines(root, environ={**_env(), "PATH": str(tmp_path / "no-bin")})

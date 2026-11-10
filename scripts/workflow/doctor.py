@@ -1082,8 +1082,10 @@ def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
         return None, "git took too long"
     if ran.state == "failed" and ran.said:
         return None, f"git said: {_scrubbed(i, ran.err)}"
-    if ran.state == "failed" and ran.code is not None:
+    if ran.state == "failed" and ran.code is not None and ran.code > 0:
         return None, f"git exited with code {ran.code} and said nothing"
+    if ran.state == "failed" and ran.code is not None:  # a signal stopped it: no exit code
+        return None, "git failed and said nothing"
     if ran.state == "failed":
         return None, "git couldn't be started"
     return None, "git failed"
