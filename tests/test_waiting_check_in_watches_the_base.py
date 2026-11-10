@@ -271,5 +271,7 @@ def test_changelog_notes_685_without_bumping_version():
     notes = since_0110()
     assert "(#685" in notes
     assert "a queued head in conflict" in notes.lower()
-    # build tickets never bump VERSION (CONTRIBUTING.md): the notes stay under "## Unreleased"
-    assert since_0110().startswith("## Unreleased")
+    # build tickets never bump VERSION (CONTRIBUTING.md): it stays the latest released heading
+    log = (KIT / "CHANGELOG.md").read_text()
+    released = re.findall(r"^## (\d+\.\d+\.\d+)$", log, re.M)
+    assert (KIT / "VERSION").read_text().strip() == released[0]
