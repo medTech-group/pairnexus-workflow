@@ -1080,8 +1080,8 @@ def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
         return None, "git isn't on the PATH"
     if ran.state == "timeout":
         return None, "git took too long"
-    if ran.state == "failed" and ran.said:
-        return None, f"git said: {_scrubbed(i, ran.err)}"
+    if ran.state == "failed" and ran.said:  # never its words: they may hold a path
+        return None, f"git exited with code {ran.code}" if ran.code and ran.code > 0 else "git failed"
     if ran.state == "failed" and ran.code is not None and ran.code > 0:
         return None, f"git exited with code {ran.code} and said nothing"
     if ran.state == "failed" and ran.code is not None:  # a signal stopped it: no exit code
@@ -1302,7 +1302,7 @@ def _again(give: str = GIVE_FILES) -> Words:
 
 
 def _scrubbed(i: Inputs, text: str) -> str:
-    """Text from `gh` or `git`, on one line, with the home directory as `~`."""
+    """Text from `gh`, on one line, with the home directory as `~`."""
     home = (i.environ.get("HOME") or "").rstrip(os.sep)
     for h in dict.fromkeys((home, os.path.realpath(home) if home else "")):
         if h and h != os.sep:

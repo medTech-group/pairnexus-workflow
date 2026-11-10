@@ -299,13 +299,14 @@ def test_a_git_that_fails_saying_nothing_is_said_plainly(tmp_path):
         assert "(git exited with code 3 and said nothing)" in ln.message.developer
 
 
-def test_what_git_really_said_is_still_given_as_its_words(tmp_path):
+def test_doctor_output_when_git_fails_saying_little(tmp_path):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
     got = _lines(root, environ=_fake_git(tmp_path, "#!/bin/sh\necho 'exit 3' >&2\nexit 3\n"))
     for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
         ln = got[id_]
         assert ln.status == "cant_check" and ln.fix == UNLISTED
-        assert "(git said: exit 3)" in ln.message.new and "(git said: exit 3)" in ln.message.developer
+        assert "git said" not in _said(ln) and "said nothing" not in _said(ln)
+        assert "(git exited with code 3)" in ln.message.new and "(git exited with code 3)" in ln.message.developer
 
 
 def test_doctor_output_when_git_fails(tmp_path):
@@ -319,7 +320,8 @@ def test_doctor_output_when_git_fails(tmp_path):
         ln = got[id_]
         assert ln.status == "cant_check" and ln.fix == UNLISTED
         for said in (ln.message.new, ln.message.developer):
-            assert "(git said: next line: see ~/proj and .)" in said, said
+            assert "git said" not in said and "next line" not in said and "fatal" not in said, said
+            assert "(git exited with code 128)" in said, said
             assert str(home) not in said and str(tmp_path) not in said
 
 
@@ -338,8 +340,22 @@ def test_doctor_output_when_git_fails_more(tmp_path, said):
         ln = got[id_]
         assert ln.status == "cant_check" and ln.fix == UNLISTED
         for shown in (ln.message.new, ln.message.developer):
-            assert "git said: fatal: " in shown and "~" in shown, shown
+            assert "git said" not in shown and "fatal" not in shown and "~" not in shown, shown
+            assert "(git exited with code 128)" in shown, shown
             assert str(home) not in shown and str(tmp_path) not in shown, shown
+
+
+def test_doctor_output_with_a_home_name_that_isnt_utf8(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    home = os.fsdecode(os.fsencode(tmp_path / "home") + b"/caf\xe9")
+    script = "#!/bin/sh\nprintf \"fatal: detected dubious ownership in repository at '%s/proj'\\n\" \"$HOME\" >&2\nexit 128\n"
+    got = _lines(root, environ={**_fake_git(tmp_path, script), "HOME": home})
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        for shown in (ln.message.new, ln.message.developer):
+            assert "caf" not in shown and "home" not in shown and str(tmp_path) not in shown, shown
+            assert "(git exited with code 128)" in shown, shown
 
 
 @pytest.mark.parametrize("text, shown", [
@@ -416,7 +432,7 @@ def test_a_tracked_name_that_isnt_utf8_is_still_walked(tmp_path):
     assert got["kit.architecture.unmatched"].status == "fine"
 
 
-def test_outside_a_git_checkout_the_walk_says_what_git_said(tmp_path):
+def test_doctor_output_outside_a_git_checkout(tmp_path):
     root = tmp_path / "proj"
     (root / ".claude/workflow").mkdir(parents=True)
     (root / ".claude/workflow/profile.toml").write_text(_prof())
@@ -427,8 +443,8 @@ def test_outside_a_git_checkout_the_walk_says_what_git_said(tmp_path):
     for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
         ln = got[id_]
         assert ln.status == "cant_check"
-        assert "not a git repository" in ln.message.new and "not a git repository" in ln.message.developer
-        assert "exit 128" not in _said(ln)
+        assert "not a git repository" not in _said(ln) and "git said" not in _said(ln)
+        assert "(git exited with code 128)" in ln.message.new and "(git exited with code 128)" in ln.message.developer
         assert ln.fix == UNLISTED
 
 
@@ -443,7 +459,7 @@ def test_when_git_takes_too_long_the_walk_says_so(tmp_path, monkeypatch):
         assert ln.fix == UNLISTED
 
 
-def test_gits_own_message_is_shown_escaped(tmp_path, monkeypatch):
+def test_doctor_output_when_git_fails_with_escapes(tmp_path, monkeypatch):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
     monkeypatch.setattr(doctor, "_run", lambda *a, **k: doctor.Ran("failed", err="fatal: \x1b[31mbad", code=128, said=True))
     got = _lines(root)
@@ -451,7 +467,20 @@ def test_gits_own_message_is_shown_escaped(tmp_path, monkeypatch):
         ln = got[id_]
         assert ln.status == "cant_check" and ln.fix == UNLISTED
         assert all(ch.isprintable() for ch in _said(ln))
-        assert doctor._printable("fatal: \x1b[31mbad") in ln.message.new and doctor._printable("fatal: \x1b[31mbad") in ln.message.developer
+        assert "fatal" not in _said(ln) and "bad" not in _said(ln)
+        assert "(git exited with code 128)" in ln.message.new and "(git exited with code 128)" in ln.message.developer
+
+
+def test_doctor_output_when_git_is_stopped_after_saying_something(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    monkeypatch.setattr(doctor, "_run", lambda *a, **k: doctor.Ran("failed", err="fatal: in /home/someone", code=-9, said=True))
+    got = _lines(root)
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        assert "fatal" not in _said(ln) and "someone" not in _said(ln) and "said nothing" not in _said(ln)
+        assert "exited with code" not in _said(ln)
+        assert "(git failed)" in ln.message.new and "(git failed)" in ln.message.developer
 
 
 @pytest.mark.parametrize("name", ["\x1b]0;x\x07", "\x1b[31mx\x1b[0m", "two\nlines"])
