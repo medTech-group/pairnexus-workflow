@@ -214,6 +214,8 @@ class Ran:
     state: str
     out: str | None = None
     err: str = ""  # the last lines it printed on stderr, when asked for
+    code: int | None = None  # its exit code, when it ran and failed
+    said: bool = False  # `err` is what it printed, not words of doctor's own
 
 
 def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool = False, errors: str = "strict") -> Ran:
@@ -252,7 +254,7 @@ def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool 
         return Ran("timeout")
     if p.returncode:
         said = (err or b"").decode("utf-8", "replace").strip().splitlines()
-        return Ran("failed", err="\n".join(said[-3:])[:600] if said else f"exit {p.returncode}")
+        return Ran("failed", err="\n".join(said[-3:])[:600] if said else f"exit {p.returncode}", code=p.returncode, said=bool(said))
     try:
         return Ran("ok", out.decode("utf-8", errors))
     except UnicodeDecodeError:
@@ -1078,7 +1080,13 @@ def _tracked(i: Inputs) -> tuple[list[str] | None, str]:
         return None, "git isn't on the PATH"
     if ran.state == "timeout":
         return None, "git took too long"
-    return None, f"git said: {_shown(ran.err or 'git failed', 120)}"
+    if ran.state == "failed" and ran.said:
+        return None, f"git said: {_shown(ran.err, 120)}"
+    if ran.state == "failed" and ran.code is not None:
+        return None, f"git exited with code {ran.code} and said nothing"
+    if ran.state == "failed":
+        return None, "git couldn't be started"
+    return None, "git failed"
 
 
 def _code(p: Profile, tracked: list[str]) -> list[str]:
@@ -1115,7 +1123,8 @@ def check_architecture(i: Inputs) -> list[Line]:
     tracked, why = _tracked(i)
     lines: list[Line] = []
     if tracked is None:
-        unlisted = Words("See what git says, then run this check again.", "See what git says, then rerun doctor.")
+        unlisted = Words("Run this check again once `git ls-files` works in the project.",
+                         "Rerun doctor once `git ls-files` works in the project.")
         lines.append(Line(g, "kit.architecture.uncovered", "cant_check", Words(
             f"Can't tell which code no architecture page describes: the project's files couldn't be listed ({why}).",
             f"Uncovered code unchecked: `git ls-files` failed ({why}).",

@@ -257,8 +257,54 @@ def test_a_page_with_no_covers_line_is_a_note_and_the_overview_gets_none(tmp_pat
 
 # ---------- what can't be read ----------
 
-# When the tracked files can't be listed, one fix, whatever the cause.
-UNLISTED = doctor.Words("See what git says, then run this check again.", "See what git says, then rerun doctor.")
+# When the tracked files can't be listed, one fix, whatever the cause: it
+# never sends the user to what git said, since git may have said nothing.
+UNLISTED = doctor.Words("Run this check again once `git ls-files` works in the project.",
+                        "Rerun doctor once `git ls-files` works in the project.")
+
+
+def _fake_git(tmp_path, script):
+    """A folder holding only an executable `git` with this text, for PATH."""
+    bin_ = tmp_path / "fake-bin"
+    bin_.mkdir()
+    (bin_ / "git").write_text(script)
+    (bin_ / "git").chmod(0o755)
+    return {**_env(), "PATH": str(bin_)}
+
+
+def test_the_fix_never_sends_the_user_to_what_git_said():
+    for said in (UNLISTED.new, UNLISTED.developer):
+        assert "git says" not in said and "git said" not in said
+
+
+def test_a_git_that_cant_be_started_is_said_plainly(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    got = _lines(root, environ=_fake_git(tmp_path, "#!/nonexistent/interp\n"))
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        assert "git said" not in _said(ln)
+        assert "(git couldn't be started)" in ln.message.new and "(git couldn't be started)" in ln.message.developer
+
+
+def test_a_git_that_fails_saying_nothing_is_said_plainly(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    got = _lines(root, environ=_fake_git(tmp_path, "#!/bin/sh\nexit 3\n"))
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        assert "git said" not in _said(ln)
+        assert "(git exited with code 3 and said nothing)" in ln.message.new
+        assert "(git exited with code 3 and said nothing)" in ln.message.developer
+
+
+def test_what_git_really_said_is_still_given_as_its_words(tmp_path):
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
+    got = _lines(root, environ=_fake_git(tmp_path, "#!/bin/sh\necho 'exit 3' >&2\nexit 3\n"))
+    for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
+        ln = got[id_]
+        assert ln.status == "cant_check" and ln.fix == UNLISTED
+        assert "(git said: exit 3)" in ln.message.new and "(git said: exit 3)" in ln.message.developer
 
 
 def test_without_git_the_walk_cant_check_and_the_pages_are_still_read(tmp_path):
@@ -315,7 +361,7 @@ def test_when_git_takes_too_long_the_walk_says_so(tmp_path, monkeypatch):
 
 def test_gits_own_message_is_shown_escaped(tmp_path, monkeypatch):
     root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/a.md": "Covers: src/**\n"})
-    monkeypatch.setattr(doctor, "_run", lambda *a, **k: doctor.Ran("failed", err="fatal: \x1b[31mbad"))
+    monkeypatch.setattr(doctor, "_run", lambda *a, **k: doctor.Ran("failed", err="fatal: \x1b[31mbad", code=128, said=True))
     got = _lines(root)
     for id_ in ("kit.architecture.uncovered", "kit.architecture.unmatched"):
         ln = got[id_]
