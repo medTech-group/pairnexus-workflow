@@ -27,7 +27,8 @@ COMMAND = re.compile(r"`WF merge-check --fetch <(?:PR|pr|n)> --json --charter \.
 # Each way of merging pins the head merge-check checked.
 # When a path-filtered check that never started goes to the owner.
 PATH_FILTERED_WHEN = (
-    "only once every other required check has finished and the evidence is posted: `WF merge-check`'s only reason left is "
+    "only once every other required check has finished and, where the report is required (`build-ticket` §6 step 2), "
+    "the evidence is posted: `WF merge-check`'s only reason left is "
     "`checks_pending`, for checks that are all in `ci.path_filtered` and `missing` in its `checks[]`"
 )
 # The session's own line waits on the evidence only where the report is required (#663).
@@ -220,7 +221,7 @@ def test_briefing_names_merge_check_and_the_charter(tmp_path):
     assert "the body of the tracking issue #232 saved to `.workflow/tracking.md`" in merging
     assert "`ready` is the only yes. On `not_yet`, never merge, arm auto-merge or queue (disarm auto-merge if it's armed)" in merging
     assert "merge it yourself with a merge commit pinned to the head it checked" in merging
-    assert "On `ready`, act by the merge mode: `session` merges with a merge commit pinned to the head it checked; `auto-merge` arms auto-merge pinned to it; `owner` says it's ready and leaves it." in merging
+    assert "On `ready`, act by the merge mode: `session` merges with a merge commit pinned to the head it checked; `auto-merge` arms auto-merge pinned to it; `owner` says it's ready on the PR and on #232, and leaves it." in merging
     assert "In `auto-merge` mode, disarm auto-merge before any push while it's armed." in merging
     assert "Right before each of these (merging, arming auto-merge, queueing, saying it's ready), run `workflow merge-check`" in merging
     assert "Merge mode: **session**" in merging and "Backend tests" in merging
@@ -234,7 +235,7 @@ def test_without_a_queue_the_briefing_merges_or_arms_auto_merge(tmp_path):
     assert (
         "- **Without a merge queue** (`merge-check`'s `queue` is false, with no `queue_unsure` note). On `ready`, act by the merge mode: "
         "`session` merges with a merge commit pinned to the head it checked; `auto-merge` arms auto-merge pinned to it; "
-        "`owner` says it's ready and leaves it. In `auto-merge` mode, disarm auto-merge before any push while it's armed. "
+        "`owner` says it's ready on the PR and on #232, and leaves it. In `auto-merge` mode, disarm auto-merge before any push while it's armed. "
         "If GitHub refuses to arm auto-merge because the PR is already mergeable (clean), run `merge-check` again at that moment "
         "and, on `ready`, merge it yourself with a merge commit pinned to the head it checked.\n"
     ) in merging
