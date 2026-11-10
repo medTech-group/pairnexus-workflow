@@ -53,6 +53,7 @@ import statistics
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import tomllib
 import urllib.parse
@@ -229,14 +230,32 @@ def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool 
     exe = shutil.which(argv[0], path=i.path)
     if not exe:
         return Ran("missing")
+    # A Ctrl-C while Popen starts the command is held until `p` is set: raised
+    # inside Popen, it would leave the command running with nothing to kill it
+    # (#684). Only the main thread's handler raises KeyboardInterrupt.
+    held: list[int] = []
+    previous = signal.getsignal(signal.SIGINT)
+    hold = callable(previous) and threading.current_thread() is threading.main_thread()
+    if hold:
+        signal.signal(signal.SIGINT, lambda *_: held.append(1))
     try:
         p = subprocess.Popen([exe, *argv[1:]], cwd=i.root if i.root.is_dir() else None, env=i.environ,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr else subprocess.DEVNULL,
                              start_new_session=True)
-    except (OSError, ValueError):
-        return Ran("failed", err="it couldn't be started")
+    except BaseException as e:
+        if hold:
+            signal.signal(signal.SIGINT, previous)
+        if held:
+            raise KeyboardInterrupt from None
+        if isinstance(e, (OSError, ValueError)):
+            return Ran("failed", err="it couldn't be started")
+        raise
     timed_out, err = False, b""
     try:
+        if hold:
+            signal.signal(signal.SIGINT, previous)
+        if held:
+            raise KeyboardInterrupt
         out, err = p.communicate(timeout=RUN_TIMEOUT if timeout is None else timeout)
     except subprocess.TimeoutExpired:
         timed_out = True

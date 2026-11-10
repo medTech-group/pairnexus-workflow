@@ -1014,6 +1014,115 @@ def test_a_hung_command_is_stopped_with_what_it_started(tmp_path, monkeypatch):
     assert _gone(child), "the hung command's child is still running"
 
 
+def _ctrl_c_in_popen(tmp_path, monkeypatch, body=None, wait=60.0):
+    """Run doctor's `claude --version`, its fake `claude` given by `body`
+    (by default, one that writes its child's pid to the marker), and press
+    Ctrl-C inside Popen once that pid is written; give the pid. The SIGINT is
+    sent even when the pid never came, so the fake is stopped, but the test
+    then fails saying so: the pid must be there before the signal."""
+    import signal
+    import time
+
+    from workflow import doctor
+
+    path = _bin(tmp_path, python=None, claude=None)
+    marker = tmp_path / "child.pid"
+    _fake(path, "claude", body or f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
+    real = subprocess.Popen
+    started = []
+
+    def written():
+        return marker.exists() and marker.read_text().strip()
+
+    def popen(*a, **kw):
+        p = real(*a, **kw)
+        end = time.monotonic() + wait
+        while not written() and p.poll() is None and time.monotonic() < end:
+            time.sleep(0.05)
+        started.append(bool(written()))
+        os.kill(os.getpid(), signal.SIGINT)
+        return p
+
+    monkeypatch.setattr(doctor.subprocess, "Popen", popen)
+    i = _inputs(tmp_path, environ={"PATH": str(path), "HOME": str(tmp_path)})
+    # Ctrl-C raises KeyboardInterrupt here even where pytest was started ignoring it.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            doctor.check_claude_code(i)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert started == [True], f"the fake never wrote its pid within {wait} s, so Ctrl-C wasn't sent to a running command"
+    return int(marker.read_text())
+
+
+def test_a_ctrl_c_while_a_command_starts_stops_what_it_started(tmp_path, monkeypatch):
+    # A Ctrl-C that lands inside Popen, once the child is running but before
+    # Popen returns, used to leave Popen without `p`, so nothing killed the
+    # child (#684). The fake Popen sends the SIGINT at that moment.
+    assert _gone(_ctrl_c_in_popen(tmp_path, monkeypatch)), "what the command started is still running"
+
+
+def test_a_ctrl_c_while_a_slow_command_starts_waits_for_its_pid(tmp_path, monkeypatch):
+    # A busy machine starts the fake late: the Ctrl-C waits for its pid.
+    sleep, marker = shutil.which("sleep"), tmp_path / "child.pid"
+    pid = _ctrl_c_in_popen(tmp_path, monkeypatch, f"{sleep} 6; {sleep} 30 & echo $! > {marker}; wait")
+    assert _gone(pid), "what the command started is still running"
+
+
+def test_a_ctrl_c_in_popen_test_fails_clearly_when_the_fake_never_wrote_its_pid(tmp_path, monkeypatch):
+    with pytest.raises(AssertionError, match="never wrote its pid"):
+        _ctrl_c_in_popen(tmp_path, monkeypatch, f"exec {shutil.which('sleep')} 30", wait=1)
+
+
+def _unstartable(tmp_path):
+    """Inputs whose `claude` is on the PATH but can't be started: its
+    interpreter isn't there, so Popen raises OSError."""
+    path = _bin(tmp_path, python=None, claude=None)
+    (path / "claude").write_text("#!/nonexistent/interp\n")
+    (path / "claude").chmod(0o755)
+    return _inputs(tmp_path, environ={"PATH": str(path), "HOME": str(tmp_path)})
+
+
+def test_a_command_that_cant_be_started_gives_back_the_ctrl_c_handler(tmp_path):
+    import signal
+
+    from workflow import doctor
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        ln = doctor.check_claude_code(_unstartable(tmp_path))[0]
+        handler = signal.getsignal(signal.SIGINT)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert ln.status == "cant_check" and "gave none" in ln.message.developer
+    assert handler is signal.default_int_handler
+
+
+def test_a_ctrl_c_while_a_start_fails_stops_the_run(tmp_path, monkeypatch):
+    import signal
+
+    from workflow import doctor
+
+    real = subprocess.Popen
+
+    def popen(*a, **kw):
+        os.kill(os.getpid(), signal.SIGINT)
+        return real(*a, **kw)  # raises OSError: the interpreter isn't there
+
+    monkeypatch.setattr(doctor.subprocess, "Popen", popen)
+    i = _unstartable(tmp_path)
+    # Ctrl-C raises KeyboardInterrupt here even where pytest was started ignoring it.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            doctor.check_claude_code(i)
+        handler = signal.getsignal(signal.SIGINT)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert handler is signal.default_int_handler
+
+
 def _gone(pid, seconds=5.0):
     """The process has ended: no such pid, or a zombie nobody has reaped yet
     (a container's PID 1 may never reap orphans)."""
@@ -1032,6 +1141,55 @@ def _gone(pid, seconds=5.0):
             pass
         time.sleep(0.1)
     return False
+
+
+# Runs the CLI's entry point as `python3 <script> <args>` does, with doctor's
+# RUN_TIMEOUT set first: the seam a Ctrl-C test controls across the process.
+_LAUNCH = """\
+import runpy, sys
+from pathlib import Path
+script, timeout = sys.argv[1], float(sys.argv[2])
+sys.argv = [script, *sys.argv[3:]]
+sys.path.insert(0, str(Path(script).resolve().parent))
+from workflow import doctor
+doctor.RUN_TIMEOUT = timeout
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
+    """Start `workflow <args>` from `script`, press Ctrl-C once the fake it
+    runs has written its pid to `marker`, and give (exit code, stderr).
+
+    Two things made this fail on a busy machine (#684), so neither is left to
+    chance: a pytest started with SIGINT ignored (a shard started in the
+    background) passed that on, and Python then never raises
+    KeyboardInterrupt, so the child gets SIGINT's default back, as a terminal
+    gives it; and doctor's own 10-second timeout could end the run by itself
+    before a slow fake had started, so the run's timeout is set far past the
+    wait. The pid must be there before the signal: a fake that never wrote it
+    fails here, saying so, rather than being sent a Ctrl-C blind."""
+    import signal
+    import time
+
+    def written():
+        return marker.exists() and marker.read_text().strip()
+
+    p = subprocess.Popen([sys.executable, "-B", "-c", _LAUNCH, str(script), str(run_timeout), *args], cwd=root, env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+    end = time.monotonic() + wait
+    while not written() and p.poll() is None and time.monotonic() < end:
+        time.sleep(0.05)
+    started = written()
+    p.send_signal(signal.SIGINT)  # also stops a run whose fake never wrote its pid
+    try:
+        _, err = p.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        _, err = p.communicate()
+    assert started, f"the fake never wrote its pid within {wait} s, so Ctrl-C wasn't sent to a running command (exit {p.returncode}): {err}"
+    return p.returncode, err
 
 
 def test_a_check_that_raises_is_cant_check_without_the_checkouts_path(tmp_path, monkeypatch):
@@ -1144,24 +1302,24 @@ def test_claude_not_on_the_path_says_so(tmp_path):
 
 
 def test_ctrl_c_stops_quietly_with_nothing_left_running(tmp_path):
-    import signal
-    import time
-
     root = _project(tmp_path)
     path = _bin(tmp_path, claude=None)
     marker = tmp_path / "child.pid"
     _fake(path, "claude", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(path)}
-    p = subprocess.Popen([sys.executable, "-B", str(root / ".claude/workflow/bin/workflow.py"), "doctor"], cwd=root, env=env,
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    for _ in range(100):
-        if marker.exists() and marker.read_text().strip():
-            break
-        time.sleep(0.1)
-    p.send_signal(signal.SIGINT)
-    out, err = p.communicate(timeout=20)
-    assert p.returncode == 130 and "workflow doctor: stopped" in err and "Traceback" not in err
+    code, err = _ctrl_c(root / ".claude/workflow/bin/workflow.py", ["doctor"], root, env, marker)
+    assert code == 130 and "workflow doctor: stopped" in err and "Traceback" not in err
     assert _gone(int(marker.read_text()))
+
+
+def test_a_ctrl_c_test_fails_clearly_when_the_fake_never_wrote_its_pid(tmp_path):
+    root = _project(tmp_path)
+    path = _bin(tmp_path, claude=None)
+    marker = tmp_path / "child.pid"
+    _fake(path, "claude", f"exec {shutil.which('sleep')} 30")
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(path)}
+    with pytest.raises(AssertionError, match="never wrote its pid"):
+        _ctrl_c(root / ".claude/workflow/bin/workflow.py", ["doctor"], root, env, marker, wait=1)
 
 
 def test_a_missing_folder_under_home_is_shown_from_home(tmp_path):
