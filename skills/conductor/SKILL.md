@@ -471,7 +471,7 @@ WF render --template TEMPLATES/ticket-session-prompt.md --ticket ticket.json --c
 
 | Key | What goes in it |
 |---|---|
-| `alongside` | The tickets running now and their areas, what each touches, what this one stays out of |
+| `alongside` | The tickets running now and their areas, what each touches, what this one stays out of. `docs/architecture/` is never on that stay-out list, even when another ticket's area matches it: lines under it are always the change's own |
 | `read_first` | The exact URLs of tracking-issue comments with notes tagged for this ticket or its area, and the merged PRs it builds on |
 | `owner_decisions` | The owner's amendments since the run began that touch this ticket |
 | `briefing` | Anything specific: known pitfalls, environment quirks from `profile.md`, what a previous attempt left (branch, PR, head SHA), and a held pull request's fix ("A pull request that needs a code fix") |
