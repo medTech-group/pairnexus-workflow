@@ -33,6 +33,7 @@ import collections
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -208,8 +209,9 @@ class _Words(collections.namedtuple("_Words", "new developer")):
 # mode the full doctor gives it only when something is wrong; "wrangler": only
 # in a project with a Wrangler config at its root or a `[previews]` section in
 # its profile, read as text, so roughly as the full doctor gives it;
-# "architecture": only with a `docs/architecture/` folder, #615), and what it
-# checks.
+# "architecture": only with a `docs/architecture/` folder, #615; "overview":
+# only in plugin mode with a profile whose `project.rules`, read as text,
+# doesn't list the architecture overview, #639), and what it checks.
 _DOCTOR_LINES = (
     ("Your computer", "computer.claude_code", None, _Words("which version of Claude Code you have", "Claude Code's version")),
     ("The kit", "kit.profile", None, _Words("the kit's profile (.claude/workflow/profile.toml)", "`profile check`")),
@@ -219,6 +221,7 @@ _DOCTOR_LINES = (
     ("The kit", "kit.experience", None, _Words("the project's default for how much you know about building", "project.experience")),
     ("The kit", "kit.ruleset", None, _Words("whether the project means its main branch to be protected", "project.ruleset")),
     ("The kit", "kit.code_writers", None, _Words("who writes code in this project", "guard.code_writers")),
+    ("The kit", "kit.architecture.missing", "overview", _Words("whether the project has its architecture overview", "The architecture overview")),
     ("The kit", "kit.architecture.uncovered", "architecture", _Words("which code no architecture page describes", "Uncovered code")),
     ("The kit", "kit.architecture.unmatched", "architecture", _Words("whether each architecture page's `Covers:` lines match files",
                                                                     "Pages' `Covers:` matches")),
@@ -244,9 +247,12 @@ _WRANGLER_CONFIGS = ("wrangler.toml", "wrangler.json", "wrangler.jsonc")
 _PREVIEWS_TABLE = re.compile(r"^[ \t]*\[[ \t]*[\"']?previews[\"']?[ \t]*[\].]", re.M)
 _PREVIEWS_KEY = re.compile(r"^[ \t]*[\"']?previews[\"']?[ \t]*[.=]", re.M)
 _FIRST_TABLE = re.compile(r"^[ \t]*\[", re.M)
-# The architecture documents' folder (architecture.DIR, which this module
-# can't import).
+# The architecture documents (architecture.DIR and OVERVIEW, which this module
+# can't import), and `rules = [...]` in the profile's [project] table.
 _ARCH_DIR = "docs/architecture"
+_OVERVIEW = _ARCH_DIR + "/README.md"
+_PROJECT_TABLE = re.compile(r"^[ \t]*\[[ \t]*[\"']?project[\"']?[ \t]*\][ \t]*(?:#.*)?$", re.M)
+_RULES = re.compile(r"^[ \t]*[\"']?rules[\"']?[ \t]*=[ \t]*\[", re.M)
 # The files a session hands the full doctor: taken here, and not read.
 _DOCTOR_FILES = ("rulesets", "repo", "environments", "runs", "checks", "prs", "org", "ci", "commits")
 _EXPERIENCE_LEVELS = ("new", "developer")
@@ -424,6 +430,101 @@ def _has_previews(root):
     return bool(_PREVIEWS_TABLE.search(text) or _PREVIEWS_KEY.search(text[:first.start()] if first else text))
 
 
+def _profile_text(root):
+    """The profile's text, its bytes that aren't UTF-8 read as U+FFFD and a
+    byte-order mark left out; "" when it is there but isn't a regular file
+    (a directory, or a pipe, never opened) or can't be read; None with no
+    profile."""
+    path = os.path.join(root, ".claude", "workflow", "profile.toml")
+    if not os.path.exists(path):
+        return None
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read().lstrip("\ufeff")
+    except (OSError, ValueError):
+        return ""
+
+
+def _overview_unlisted(root):
+    """A set-up project whose profile's `project.rules`, read as text, doesn't
+    list the architecture overview. The full doctor decides by this too when
+    it can't load the profile (#639), so the two reports always agree there."""
+    text = _profile_text(root)
+    return text is not None and not _lists_overview(text)
+
+
+def _lists_overview(text):
+    """The profile's `project.rules`, read as text, lists the architecture
+    overview (a `#heading` and a leading `./` left out), as doctor reads it."""
+    m = _PROJECT_TABLE.search(text)
+    if not m:
+        return False
+    start = m.end()
+    following = _FIRST_TABLE.search(text, start)
+    body = text[start:following.start() if following else len(text)]
+    rules = _RULES.search(body)
+    if not rules:
+        return False
+    for rule in _array_strings(body, rules.end()) or ():
+        part = rule.partition("#")[0].strip()
+        if part and posixpath.normpath(part) == _OVERVIEW:
+            return True
+    return False
+
+
+def _array_strings(text, at):
+    """The strings in the TOML array whose `[` ends at `at`, read as TOML
+    reads them: `#` comments outside strings skipped, and the array ending at
+    the first `]` outside a string. None when it doesn't end, or a string in
+    it doesn't, since the full doctor can't read such a profile either."""
+    out = []
+    i, n = at, len(text)
+    while i < n:
+        c = text[i]
+        if c == "]":
+            return out
+        if c == "#":
+            end = text.find("\n", i)
+            i = n if end < 0 else end + 1
+        elif text.startswith('"""', i) or text.startswith("'''", i):
+            quote = text[i:i + 3]
+            end = text.find(quote, i + 3)
+            if end < 0:
+                return None
+            raw = text[i + 3:end]
+            raw = raw[1:] if raw.startswith("\n") else raw
+            out.append(_basic(raw) if quote == '"""' else raw)
+            i = end + 3
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] not in '"\n':
+                j += 2 if text[j] == "\\" else 1
+            if j >= n or text[j] != '"':
+                return None
+            out.append(_basic(text[i + 1:j]))
+            i = j + 1
+        elif c == "'":
+            end = text.find("'", i + 1)
+            if end < 0 or "\n" in text[i + 1:end]:
+                return None
+            out.append(text[i + 1:end])
+            i = end + 1
+        else:
+            i += 1
+    return None
+
+
+def _basic(raw):
+    """A TOML basic string's text, its escapes read (as written when they
+    aren't JSON's too)."""
+    try:
+        return json.loads('"' + raw + '"', strict=False)
+    except ValueError:
+        return raw
+
+
 def _doctor_line(group, id_, status, message, fix, wording):
     return {"group": group, "id": id_, "status": status, "message": message.pick(wording), "fix": fix.pick(wording), "offer": None}
 
@@ -451,6 +552,7 @@ def _doctor_report(root, env, version):
     mode = "plugin" if plugin else "vendored"
     wrangler = bool(root) and (any(os.path.lexists(os.path.join(root, n)) for n in _WRANGLER_CONFIGS) or _has_previews(root))
     architecture = bool(root) and os.path.isdir(os.path.join(root, _ARCH_DIR))
+    overview = bool(root) and plugin and _overview_unlisted(root)
     until = "until `python3` is {} or newer".format(NEEDS)
     lines = [_doctor_line("Your computer", "computer.python3", "gap", _Words(
         "The Python running this check (`python3`) is version {}, but the kit needs {} or newer, so its hooks fall back to a "
@@ -462,7 +564,8 @@ def _doctor_report(root, env, version):
         "Put Python {}+ first on the PATH as `python3`, start a new session, then rerun doctor with it.".format(NEEDS),
     ), wording)]
     for group, id_, only_in, what in _DOCTOR_LINES:
-        if only_in in (None, mode) or (only_in == "wrangler" and wrangler) or (only_in == "architecture" and architecture):
+        if only_in in (None, mode) or (only_in == "wrangler" and wrangler) or (only_in == "architecture" and architecture) \
+                or (only_in == "overview" and overview):
             lines.append(_doctor_line(group, id_, "cant_check", _Words(
                 "Can't check {} {}.".format(what.new, until),
                 "{} unchecked {}.".format(what.developer, until),
