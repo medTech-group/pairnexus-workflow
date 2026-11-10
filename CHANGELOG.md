@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**Ctrl-C while doctor starts a command no longer leaves it running, and the Ctrl-C tests no longer fail on a busy machine** (#684).
+
+- **`workflow doctor` and `workflow status`:** a Ctrl-C that came while doctor was starting `claude --version`, `python3`, `gh` or `git` (inside `subprocess.Popen`, once the command was already running) left that command, and whatever it had started, running after the quiet stop. The Ctrl-C is now held until the command has started, then stops it as any other Ctrl-C does: its whole process group is killed, and the run ends with exit 130.
+- **The Ctrl-C tests** (`tests/test_doctor.py`, `tests/test_status_local_gaps.py`) failed now and then in a full suite run in parallel shards. A shard started in the background ignores SIGINT, and the doctor test's command inherited that, so it never stopped; and doctor's own 10-second timeout could end the run by itself before a slow fake had started. They now give the command SIGINT's default back, set doctor's timeout far past their wait, and send the Ctrl-C only once the fake has written its pid, failing clearly if it never does. Each still checks exit 130 and that nothing is left running.
+- **For projects updating:** nothing to do.
+
 **Research notes in the repository: the folder's layout, fingerprints, the source check and current notes** (#506, part of spec #505).
 
 - **`workflow research`,** a new command whose inputs are files, with `--fetch` for pages. It calls no model and writes nothing:
