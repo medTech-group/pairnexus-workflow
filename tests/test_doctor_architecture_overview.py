@@ -173,11 +173,13 @@ def _broken(listed: bool) -> dict[str, bytes]:
         "refused": _prof(rules).replace("ruleset = true", 'ruleset = "maybe"').encode(),
         # Not UTF-8: a byte that isn't, in a comment.
         "not_utf8": (_prof(rules) + "# caf").encode() + b"\xe9\n",
+        # A byte-order mark before it: TOML refuses it, the short report leaves it out.
+        "bom": b"\xef\xbb\xbf" + _prof(rules).encode(),
     }
 
 
 @pytest.mark.parametrize("listed", [True, False], ids=["listed", "not_listed"])
-@pytest.mark.parametrize("case", ["doesnt_parse", "refused", "not_utf8"])
+@pytest.mark.parametrize("case", ["doesnt_parse", "refused", "not_utf8", "bom"])
 def test_a_profile_that_cant_be_read_gives_the_same_ids_from_both_reports(tmp_path, case, listed):
     root = _repo(tmp_path, {"src/a.py": "x\n"}, vendored=False)
     _profile_file(root).write_bytes(_broken(listed)[case])
