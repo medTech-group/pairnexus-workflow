@@ -69,6 +69,30 @@ def test_the_bullet_stays_a_list_item_before_the_bar():
     assert item.index("- where its structural lines go") < item.index("- `## Bar`, required in a `run.bar_areas` area")
 
 
+def _quick_ticket_list():
+    start = _read("skills/start/SKILL.md")
+    step_1 = start.split("**Quick ticket** (flow §2, its ticket rules):", 1)[1]
+    return _flat(step_1.split("**The end check,**", 1)[0])
+
+
+def test_the_quick_ticket_writes_the_same_part():
+    # `start`'s Quick ticket, and the sorting that drafts a triaged ticket as its
+    # step 1 writes it (flow §2 item 6), list item 2's part in the flow's words
+    assert _flat(_bullet()) in _quick_ticket_list()
+    sorting = _flat(_read("skills/start/SKILL.md").split("## 5. Sorting new issues", 1)[1])
+    assert 'as "Quick ticket" step 1 writes it' in sorting
+
+
+def test_the_build_ticket_template_has_a_section_for_it():
+    # the project's Build ticket template, which the quick ticket writes from
+    template = _read("templates/github/ISSUE_TEMPLATE/build-ticket.md")
+    section = _flat(template.split("\n## Structural lines\n", 1)[1].split("\n## ", 1)[0])
+    part = _bullet()[len("- "):].rstrip(";")
+    assert part in section
+    # in the flow's order: after the criteria, before the by-hand checks
+    assert template.index("## Acceptance criteria") < template.index("## Structural lines") < template.index("## By-hand checks")
+
+
 def test_the_overview_template_has_the_rule_the_bullet_points_at():
     overview = _flat(_read("templates/architecture-overview.md"))
     assert "### Code no page covers yet" in overview
