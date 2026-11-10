@@ -11,7 +11,7 @@ repo = "medTech-group/pairnexus-workflow" # GitHub owner/repo of the issue track
 base_branch = "main"
 owner = "raj-attur-pair"                # optional: the owner's GitHub login, without the @
 # Where the project's own rules live. Reviewers read these; nothing is copied.
-rules = ["CLAUDE.md", "CONTRIBUTING.md"] # e.g. "CLAUDE.md#safety-constraints"
+rules = ["CLAUDE.md", "CONTRIBUTING.md", "docs/architecture/README.md"] # e.g. "CLAUDE.md#safety-constraints"
 # Optional project-specific addendum read with the kit's flow.
 flow_addendum = ""                      # e.g. "docs/agents/flow-addendum.md"
 # The guided start: at the first message of an attended session, Claude asks

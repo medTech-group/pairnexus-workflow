@@ -38,11 +38,10 @@ from fractions import Fraction
 from .merge import WRITE
 from .posts import AGENT_MARKER, _login, comments_from
 
-# The per-agent figure, approximate: a trial run of the panel's 9 agents in the
-# `study` skill's ticket (#512) reported 714,627 tokens, about 79,403 each
-# (spec #505; answer 35), until the sandbox study's per-agent average replaces
-# it (#519). The skill's text quotes it.
-PER_AGENT_TOKENS = 80_000
+# The per-agent figure: the sandbox study's per-agent average (#518, spec #505),
+# 731,398 tokens across 15 agents (the panel's 10 and the 5 checks around it),
+# 48,759.87 each, rounded to the nearest token (#519). The skill's text quotes it.
+PER_AGENT_TOKENS = 48_760
 # The panel at its largest: one evidence gatherer, one question writer, 8
 # personas (5 to 8), a synthesizer and a validator. The skill's text quotes it.
 PANEL_AGENTS = 12
