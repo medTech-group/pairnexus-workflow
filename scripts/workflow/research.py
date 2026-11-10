@@ -914,7 +914,7 @@ _HOST_REFUSED = (
 # browsers do: `faß.de` is `xn--fa-hia.de`, never `fass.de`. (The joiners,
 # U+200C and U+200D, need CONTEXTJ's rules: refused, as any format character is.)
 _HOST_DEVIATIONS = frozenset("\u00df\u03c2")
-# The only ASCII characters a host label outside ASCII may hold.
+# The only ASCII characters a host outside ASCII may hold, in any of its labels.
 _HOST_ASCII = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
 
 
@@ -950,6 +950,8 @@ def _ascii_host(host: str) -> str:
         if label[:4].lower() == "xn--":
             raise PageError("its host mixes a label already in Punycode (`xn--`) with letters outside ASCII")
         if label.isascii():
+            if not all(c in _HOST_ASCII for c in label):
+                raise PageError("its host holds a character that can't be encoded by UTS 46 as browsers do (IDNA)")
             labels.append(label)
             continue
         if len(label) > 63:  # DNS's limit, checked before Punycode, which takes quadratic time

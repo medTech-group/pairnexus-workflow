@@ -367,8 +367,9 @@ def _refused_before_any_request(project, seen, monkeypatch, link):
 @pytest.mark.parametrize(
     "link",
     ["https://\u00fc%2Eapple.com/docs", "https://a.\u00fc%3a8080/", "https://\u00fc.de%40apple.com/", "https://\u00fc%00.de/", "https://\u00fc\\.apple.com/docs",
-     "https://\u00fc.evil.de\\@apple.com/docs"],
-    ids=["1", "2", "3", "4", "5", "6"],
+     "https://\u00fc.evil.de\\@apple.com/docs", "https://\u00fc.apple.com\\.evil.de/docs", "https://\u00fc.de\\@apple.com/docs", "http://\u00fc.de:80\\.evil.de/",
+     "http://\u00fc.a|b.de/", "http://\u00fc.a^b.de/", "http://\u00fc.a{b.de/"],
+    ids=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
 )
 def test_link_spoofing(project, seen, monkeypatch, link):
     _refused_before_any_request(project, seen, monkeypatch, link)
@@ -383,7 +384,7 @@ def test_page_fetching_host(project, seen, monkeypatch, link):
     _refused_before_any_request(project, seen, monkeypatch, link)
 
 
-@pytest.mark.parametrize("link,sent", [("http://a-\u00fc9.de/", "GET http://xn--a-9-ioa.de/ HTTP/1.1")])
+@pytest.mark.parametrize("link,sent", [("http://a-\u00fc9.de/", "GET http://xn--a-9-ioa.de/ HTTP/1.1"), ("http://\u00fc.a-1.de/", "GET http://xn--tda.a-1.de/ HTTP/1.1")])
 def test_page_fetching_host_still_encodes_letters_digits_and_hyphens(project, seen, link, sent):
     base, requests = seen
     p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
