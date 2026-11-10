@@ -345,7 +345,7 @@ def test_page_fetching_encodes_a_host_by_uts46_non_transitional(project, seen, l
     p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
     assert "Traceback" not in p.stderr
     assert p.returncode == 1 and "can't fetch" in p.stderr  # the proxy answers 404
-    assert requests[:1] == [sent]
+    assert [r.rsplit(" ", 1)[0] for r in requests[:1]] == [sent.rsplit(" ", 1)[0]]  # without the HTTP version: Python 3.11 sends CONNECT as HTTP/1.0
 
 
 def _refused_before_any_request(project, seen, monkeypatch, link):
@@ -387,7 +387,7 @@ def test_page_fetching_host_still_encodes_letters_digits_and_hyphens(project, se
     base, requests = seen
     p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
     assert p.returncode == 1 and "can't fetch" in p.stderr  # the proxy answers 404
-    assert requests[:1] == [sent]
+    assert [r.rsplit(" ", 1)[0] for r in requests[:1]] == [sent.rsplit(" ", 1)[0]]  # without the HTTP version: Python 3.11 sends CONNECT as HTTP/1.0
 
 
 def test_page_fetching_refuses_a_host_label_over_63_characters_at_once(project, seen):
