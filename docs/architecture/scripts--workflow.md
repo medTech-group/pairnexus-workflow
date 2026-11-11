@@ -9,7 +9,7 @@ A small page: only the lines changes have written so far. The rest of the folder
 
 - `_paths`: in `evidence.py`, names paths in a message: the first five, then "and N more".
 - `_dirty_store`: in `evidence.py`, the emptied `<sha>-dirty` store, where a run keeps what didn't run on the commit itself (a dirty tree with `--allow-dirty`, or a tree that changed mid-run), apart from the commit's evidence and never reused.
-- `tree_state`: in `evidence.py`, a look at the checkout's tree outside `.workflow/`: each tracked or staged path's index entries and `lstat` (a checked-out submodule's HEAD and its own tracked paths in its place), and the untracked files that aren't ignored. `tree_changes` gives the paths that differ between two looks; read-only git commands change neither.
+- `tree_state`: in `evidence.py`, a look at the checkout's tree outside `.workflow/`: each tracked or staged path's index entries and `lstat` and the untracked files that aren't ignored (a checked-out submodule's HEAD and its own tracked and untracked paths in its place). `tree_changes` gives the paths that differ between two looks; read-only git commands change neither.
 - `ascii_link`: in `research.py`, the link in ASCII: the host encoded by UTS 46 non-transitional rules, the userinfo, path, query and fragment percent-encoded as UTF-8. `fetch` sends a link outside ASCII without its userinfo, as a browser does; a link in ASCII as written. `fetch` and `link_problem` both use it, so a link that can be saved is one that can be fetched.
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 

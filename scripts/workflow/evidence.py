@@ -168,14 +168,17 @@ def _git_out(root: Path, *args: str) -> bytes:
     return p.stdout
 
 
-def _tracked(root: Path, prefix: str, files: dict[str, tuple]) -> None:
+def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[str]) -> None:
     """Each tracked or staged path under `root`, named with `prefix`: its index
     entries (a path in conflict has one a stage) and its file's `lstat`, times in
     nanoseconds and the change time included, so a write is seen even when it
-    put back the same bytes. A checked-out submodule (a gitlink) is its HEAD and,
-    the same way, its own tracked paths, so an edit or a commit inside it is
-    seen too; its folder's own `lstat` isn't kept, since files appearing in it
-    change that."""
+    put back the same bytes; and in `untracked`, the untracked files that
+    aren't ignored. A checked-out submodule (a gitlink) is its HEAD and, the
+    same way, its own tracked and untracked paths, so an edit, a commit or a
+    new file inside it is seen too; its folder's own `lstat` isn't kept, since
+    files appearing in it change that."""
+    names = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "-z")).split("\0")
+    untracked.update(prefix + n for n in names if n and (prefix or not n.startswith(".workflow/")))
     entries: dict[str, list[str]] = {}
     for entry in os.fsdecode(_git_out(root, "ls-files", "--stage", "-z")).split("\0"):
         info, _, name = entry.partition("\t")
@@ -186,7 +189,7 @@ def _tracked(root: Path, prefix: str, files: dict[str, tuple]) -> None:
         if any(i.startswith("160000 ") for i in info) and (path / ".git").exists():
             head = subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=path, capture_output=True, text=True)
             files[prefix + name] = (tuple(info), "submodule", head.stdout.strip())
-            _tracked(path, f"{prefix}{name}/", files)
+            _tracked(path, f"{prefix}{name}/", files, untracked)
             continue
         try:
             st = os.lstat(path)
@@ -198,14 +201,14 @@ def _tracked(root: Path, prefix: str, files: dict[str, tuple]) -> None:
 
 def tree_state(root: Path) -> TreeState:
     """The working tree outside .workflow/, as `collect` compares it after each
-    shard (#703): every tracked or staged path, inside submodules too
-    (`_tracked`), and the untracked files that aren't ignored, whatever the
-    user's git config. Read-only git commands (`status`, `diff`, `fetch`)
-    change neither."""
+    shard (#703): every tracked or staged path, and the untracked files that
+    aren't ignored, whatever the user's git config, inside submodules too
+    (`_tracked`). Read-only git commands (`status`, `diff`, `fetch`) change
+    neither."""
     files: dict[str, tuple] = {}
-    _tracked(root, "", files)
-    names = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "-z")).split("\0")
-    return TreeState(files, frozenset(n for n in names if n and not n.startswith(".workflow/")))
+    untracked: set[str] = set()
+    _tracked(root, "", files, untracked)
+    return TreeState(files, frozenset(untracked))
 
 
 def tree_changes(before: TreeState, after: TreeState, untracked: bool = False) -> list[str]:

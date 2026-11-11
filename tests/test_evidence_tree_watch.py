@@ -232,7 +232,9 @@ def test_a_shard_run_beside_a_changed_tree_runs_again_once_the_tree_is_clean(tmp
 
 
 @pytest.mark.parametrize(
-    "cmd", ["echo v2 > notes.txt", "echo extra > extra.txt", "echo v2 > lib/lib.txt"], ids=["tracked", "untracked", "submodule"]
+    "cmd",
+    ["echo v2 > notes.txt", "echo extra > extra.txt", "echo v2 > lib/lib.txt", "echo extra > lib/extra.txt"],
+    ids=["tracked", "untracked", "submodule", "untracked in a submodule"],
 )
 def test_allow_dirty_on_a_clean_tree_that_changes_mid_run_gives_the_dirty_marker(tmp_path, monkeypatch, capsys, cmd):
     root = _with_submodule(tmp_path)
@@ -242,6 +244,8 @@ def test_allow_dirty_on_a_clean_tree_that_changes_mid_run_gives_the_dirty_marker
     out = capsys.readouterr().out
     assert _headline(out) == evidence.headline(sha, True, dirty=True)
     assert _kept(root, sha) == ["unit-000.json"]
+    # The note names the file, inside the submodule too.
+    assert f"`{cmd.split('> ')[1]}`" in next(l for l in out.splitlines() if "while it ran" in l)
 
 
 def test_allow_dirty_on_a_dirty_tree_names_what_changed_mid_run_too(tmp_path, monkeypatch, capsys):
