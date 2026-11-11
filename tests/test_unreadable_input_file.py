@@ -485,13 +485,42 @@ def test_the_note_says_what_the_one_line_gives_for_no_path_and_standard_input(tm
 )
 def test_the_commands_the_note_says_ask_for_an_empty_path_do(tmp_path, args):
     """The note: only `briefing verify`, `comments` and `render` read an empty
-    path to refuse it; `ready`, `status`, `charter` and `state` ask for the file
-    first (`state join` among them)."""
+    path to refuse it; `ready`, `charter` and `state` ask for the file first
+    (`state join` among them), and `status` asks when the other file is given."""
     _fixtures(tmp_path)
     p = _cli(tmp_path, *args, "")
     assert p.returncode != 0 and "no path was given" not in p.stderr and "Traceback" not in p.stderr, p.stderr
     note = entry(NOTE)
-    assert "(`briefing verify`, `comments` and `render`; `ready`, `status`, `charter` and `state` ask for the file before reading it)" in note
+    assert "(`briefing verify`, `comments` and `render`; `ready`, `charter` and `state` ask for the file before reading it" in note
+    assert "`status` counts an empty `--issues` or `--prs` as not given, asking for both only when the other is given)" in note
+
+
+@pytest.mark.parametrize("args", [("status", "--issues", ""), ("status", "--issues", "", "--prs", "")])
+def test_status_counts_an_empty_path_as_not_given_as_the_note_says(tmp_path, args):
+    """With no other file given, `status` reads no file and asks for none."""
+    p = _cli(tmp_path, *args)
+    assert p.returncode == 0, p.stderr
+    assert "Issues: not read" in p.stdout and p.stderr == "", p
+    assert "`status` counts an empty `--issues` or `--prs` as not given" in entry(NOTE)
+
+
+@pytest.mark.parametrize(
+    "args, said",
+    [
+        (("ready", "--fetch", "--issues", ""), "--fetch needs a profile (project.repo)"),
+        (("state", "join", "--body", "state.md", "--out", "out.md", "--fetch", "--issues", "", "--permissions", ""), "workflow: no profile at "),
+    ],
+)
+def test_with_fetch_an_empty_path_counts_as_not_given_as_the_note_says(tmp_path, args, said):
+    """With `--fetch`, `ready` and `state join` go to the fetch (here refused,
+    as no profile names the repository), never asking for the empty file."""
+    _fixtures(tmp_path)
+    (tmp_path / ".claude/workflow/profile.toml").unlink()
+    p = _cli(tmp_path, *args)
+    assert p.returncode != 0 and p.stderr.startswith(said), p.stderr
+    note = entry(NOTE)
+    assert "except that `ready --fetch` reads neither `--issues` nor `--prs`" in note
+    assert "`state join` asks for an empty `--issues` or `--permissions` before reading it, or with `--fetch` counts it as not given" in note
 
 
 def test_the_note_says_what_protection_gives_for_no_path_and_standard_input(tmp_path):
