@@ -1,5 +1,6 @@
 Covers: scripts/workflow/evidence.py
 Covers: scripts/workflow/proc.py
+Covers: scripts/workflow/profile.py
 Covers: scripts/workflow/research.py
 
 Interface: `proc.run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and `proc.output(argv, *, cwd=None, timeout) -> str | None`.
@@ -20,6 +21,8 @@ A small page: only the lines changes have written so far. The rest of the folder
 ## Rules
 
 - `evidence.py`: a run keeps a shard's result as the commit's only after checking, once the shard has ended, that HEAD hasn't moved. A moved head stops the run with nothing kept for that shard, so a later run on the commit runs it again. The checkout's working tree is checked only at its start, and the base branch's worktree, fresh from git, not at all (#671).
+
+- `profile.py`: every `git` call goes through `_git`, so through `proc.run`, and its timeout is a module-level seam (`GIT_TIMEOUT`, or `CODE_FILES_TIMEOUT` for the tracked files), never a literal at the call, so the Ctrl-C tests can raise it past their wait (#690).
 
 ## Decisions
 
