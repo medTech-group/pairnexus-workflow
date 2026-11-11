@@ -82,8 +82,9 @@ _ADR_ID = re.compile(r"ADR:(\d+)", re.I)
 
 
 def parse_id(text: str) -> Id:
-    """`#n` or `ADR:NNNN` (backticks dropped). An answer id and a path (a
-    research note's) are ids not read yet: refused, saying so."""
+    """`#n` or `ADR:NNNN` (backticks dropped). An answer id and a research
+    note's path (under `docs/research/`, any leading `./` dropped) are ids not
+    read yet: refused, saying so. Anything else, other paths too, isn't an id."""
     t = (text or "").strip().strip("`").strip()
     if _ANSWER_ID.fullmatch(t):
         raise BadId(f"`{t}`: answer ids (`#n:answer:N`) aren't read yet")
@@ -93,7 +94,7 @@ def parse_id(text: str) -> Id:
     m = _ADR_ID.fullmatch(t)
     if m:
         return Id("adr", number=int(m.group(1)))
-    if "/" in t or t.casefold().endswith(".md"):
+    if re.sub(r"\A(?:\./)+", "", t).startswith(RESEARCH_DIR):
         raise BadId(f"`{t}`: a path (a research note's) isn't read as an id yet: that form comes later")
     raise BadId(f"`{text}` isn't an id: give `#n` or `ADR:NNNN`")
 

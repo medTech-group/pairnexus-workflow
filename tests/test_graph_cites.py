@@ -156,6 +156,16 @@ def test_a_research_notes_path_is_refused_in_one_line_as_an_id_not_read_yet(root
     assert "isn't read as an id yet: that form comes later" in err
 
 
+@pytest.mark.parametrize("path", ["https://github.com/acme/demo/issues/12", "acme/demo#5", "docs/adr/0003-slots.md", "a/b", "foo.md",
+                                  "README.md", "#12/", "/", "./docs/a.md"])
+def test_a_path_outside_the_research_notes_is_refused_as_no_id_at_all(root, monkeypatch, capsys, path):
+    """Only a research note's path is an id to come (#762): any other path never will be, so it isn't told it comes later."""
+    _push(root, {"docs/adr/0003-slots.md": "Slots.\n", "docs/a.md": "For #12.\n"})
+    code, out, err = _run(monkeypatch, capsys, root, path)
+    assert code == 2 and out == ""
+    assert err == f"workflow graph cites: `{path}` isn't an id: give `#n` or `ADR:NNNN`\n"
+
+
 # ---------- the citing sentence ----------
 
 
