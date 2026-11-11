@@ -1219,6 +1219,7 @@ def cmd_graph(a) -> int:
             return 1
     else:
         issues, prs = _json(a.issues), _json(a.prs)
+    issues, prs = _fetch_items(issues), _fetch_items(prs)
     notes: list[str] = []
     try:
         results, unread = graph_mod.cites(root, prof.base_branch, ids, issues, prs, repo=prof.repo,

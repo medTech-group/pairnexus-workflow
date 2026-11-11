@@ -516,3 +516,20 @@ def test_without_origin_base_it_says_so(root, monkeypatch, capsys):
     code, out, err = _run(monkeypatch, capsys, root, "#12")
     assert code == 1
     assert "origin/main" in err
+
+
+# ---------- the shared helpers (the overview's "Reuse, not copies") ----------
+
+
+def test_it_uses_the_shared_issue_helpers_not_copies_of_them():
+    """The pages' flattening is `cli._fetch_items`, an issue's number
+    `doctor._number`, open `status._open`, the plural `presets.plural` and the
+    repository's comparison `issues._same_repo`: graph.py has no copy of them."""
+    import inspect
+
+    from workflow import graph
+
+    src = inspect.getsource(graph)
+    for copy in ("def _items(", "def _number(", "def _open(", "def _plural(", "other.casefold() == repo.casefold()"):
+        assert copy not in src, copy
+    assert "_fetch_items(" in inspect.getsource(cli.cmd_graph)

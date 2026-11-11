@@ -5,7 +5,7 @@ Covers: scripts/workflow/proc.py
 Covers: scripts/workflow/profile.py
 Covers: scripts/workflow/research.py
 
-Interface: `proc.run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and `proc.output(argv, *, cwd=None, timeout) -> str | None`; `graph.parse_id(text) -> Id` (raises `BadId`), `graph.cites(root, base, ids, issues, prs, *, repo, sensitive, note) -> (results, unread)` (raises `GraphError`), each result's `as_dict()` the spec's `--json` object, and `graph.text(results, notes) -> str`.
+Interface: `proc.run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and `proc.output(argv, *, cwd=None, timeout) -> str | None`; `graph.parse_id(text) -> Id` (raises `BadId`), `graph.cites(root, base, ids, issues, prs, *, repo, sensitive, note) -> (results, unread)` (the issues and pull requests as lists of objects, their pages flattened; raises `GraphError`), each result's `as_dict()` the spec's `--json` object, and `graph.text(results, notes) -> str`.
 
 # scripts/workflow
 

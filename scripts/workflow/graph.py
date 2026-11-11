@@ -32,7 +32,9 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from . import doctor as doctor_mod
 from . import issues as issues_mod
+from . import presets as presets_mod
 from . import research as research_mod
 from . import small as small_mod
 from . import state as state_mod
@@ -134,7 +136,7 @@ def citation_pattern(id_: Id, repo: str | None) -> re.Pattern:
 def _cites(m: re.Match, id_: Id, repo: str | None) -> bool:
     if id_.kind == "issue":
         other = m.groupdict().get("repo")
-        return not other or bool(repo) and other.casefold() == repo.casefold()
+        return not other or issues_mod._same_repo(other, repo)
     if id_.kind == "adr":
         return int(m.group("n") or m.group("p")) == id_.number
     return True
@@ -406,30 +408,6 @@ def _read_lines(out: bytes, prefix: str, texts: dict[str, list[str]]) -> None:
 # ---------- issues ----------
 
 
-def _items(v) -> list[dict]:
-    """The objects in a list, or a list of pages, however deep they nest."""
-    out: list[dict] = []
-
-    def add(x) -> None:
-        if isinstance(x, list):
-            for y in x:
-                add(y)
-        elif isinstance(x, dict):
-            out.append(x)
-
-    add(v)
-    return out
-
-
-def _number(item: dict) -> int | None:
-    n = item.get("number")
-    return n if isinstance(n, int) and not isinstance(n, bool) else None
-
-
-def _open(item: dict) -> bool:
-    return str(item.get("state") or "open").casefold() == "open"
-
-
 @dataclass
 class Runs:
     by_hand: set[int] = field(default_factory=set)
@@ -441,7 +419,7 @@ def runs(issues: list[dict]) -> Runs:
     closed, and a line for each run whose state can't be read."""
     got = Runs()
     for item in issues:
-        n = _number(item)
+        n = doctor_mod._number(item)
         if n is None or RUN_LABEL not in issues_mod.labels_of(item):
             continue
         try:
@@ -469,7 +447,7 @@ def kind_of(item: dict, is_pr: bool, by_hand: set[int]) -> str:
         return "spec"
     if any(l.startswith("wayfinder:") and l != "wayfinder:map" for l in labels):
         return "decision"
-    if RUN_LABEL in labels or _number(item) in by_hand:
+    if RUN_LABEL in labels or doctor_mod._number(item) in by_hand:
         return "run"
     if issues_mod.is_build_ticket(item) and not labels & NOT_TICKET_LABELS and not status_mod.ITEM.search(item.get("body") or ""):
         return "ticket"
@@ -483,7 +461,7 @@ def claimed(item: dict, kind: str, closed_by: dict[int, int]) -> bool:
         return True
     if kind == "decision" and issues_mod.assignees_of(item):
         return True
-    return kind != "pull_request" and _number(item) in closed_by
+    return kind != "pull_request" and doctor_mod._number(item) in closed_by
 
 
 @dataclass
@@ -498,11 +476,11 @@ class Body:
 def open_bodies(issues: list[dict], prs: list[dict], repo: str | None, by_hand: set[int]) -> list[Body]:
     """Every open issue's and open pull request's body, by number, with its
     kind, whether it is claimed, and its own `## Replaces` lines."""
-    closed_by = issues_mod.closed_by_open_prs([p for p in prs if _number(p) is not None], repo)
+    closed_by = issues_mod.closed_by_open_prs([p for p in prs if doctor_mod._number(p) is not None], repo)
     out: dict[int, Body] = {}
     for item, is_pr in [*((p, True) for p in prs), *((i, False) for i in issues)]:
-        n = _number(item)
-        if n is None or not _open(item) or n in out or not is_pr and "pull_request" in item:
+        n = doctor_mod._number(item)
+        if n is None or not status_mod._open(item) or n in out or not is_pr and "pull_request" in item:
             continue
         k = kind_of(item, is_pr, by_hand)
         text = item.get("body") or ""
@@ -540,15 +518,15 @@ def _shown(sentence: str, sensitive: list[str]) -> str:
     return SENSITIVE if any(re.search(p, sentence) for p in sensitive) else sentence
 
 
-def cites(root: Path, base: str, ids: list[Id], issues, prs, *, repo: str | None, sensitive: list[str], note) -> tuple[list[Result], list[str]]:
-    """Each id's passages and open issues, and the lines naming runs whose
-    state can't be read. `note(text)` gets a fetch that failed (the
-    `origin/<base>` already here is read instead). Raises GraphError."""
+def cites(root: Path, base: str, ids: list[Id], issues: list[dict], prs: list[dict], *, repo: str | None, sensitive: list[str], note) -> tuple[list[Result], list[str]]:
+    """Each id's passages and open issues, from the issues and pull requests
+    as objects (their pages flattened), and the lines naming runs whose state
+    can't be read. `note(text)` gets a fetch that failed (the `origin/<base>`
+    already here is read instead). Raises GraphError."""
     try:
         ref = small_mod.base_ref(root, base, note, "the profile's project.base_branch")
     except small_mod.CantMeasure as e:
         raise GraphError(str(e)) from None
-    issues, prs = _items(issues), _items(prs)
     texts = files_citing(root, ref, ids, vendored(root, ref, note))
     got_runs = runs(issues)
     bodies = open_bodies(issues, prs, repo, got_runs.by_hand)
@@ -568,18 +546,14 @@ def cites(root: Path, base: str, ids: list[Id], issues, prs, *, repo: str | None
     return results, got_runs.unread
 
 
-def _plural(n: int, one: str, many: str) -> str:
-    return f"{n} {one if n == 1 else many}"
-
-
 def text(results: list[Result], notes: list[str]) -> str:
     """Counts first, then the passages grouped by file, then the open issues."""
     blocks = []
     for r in results:
         d = r.as_dict()
         c = d["counts"]
-        lines = [f"{d['decision']}: {_plural(c['passages'], 'passage', 'passages')} in {_plural(c['files'], 'file', 'files')}, "
-                 f"{_plural(c['issues'], 'open issue', 'open issues')}"]
+        lines = [f"{d['decision']}: {presets_mod.plural(c['passages'], 'passage', 'passages')} in {presets_mod.plural(c['files'], 'file', 'files')}, "
+                 f"{presets_mod.plural(c['issues'], 'open issue', 'open issues')}"]
         last = None
         for p in d["passages"]:
             if p["file"] != last:
