@@ -245,6 +245,17 @@ def project_root(start: Path | None = None) -> Path:
     return here
 
 
+def sensitive_match(text: str, patterns) -> str | None:
+    """The first of `patterns` (the profile's `[sensitive].patterns`) found
+    anywhere in `text`, else None."""
+    return next((p for p in patterns if re.search(p, text)), None)
+
+
+def holds_sensitive(text: str, patterns) -> bool:
+    """Whether `text` matches any of `patterns` (the profile's `[sensitive].patterns`)."""
+    return sensitive_match(text, patterns) is not None
+
+
 def _strs(v, where: str) -> list[str]:
     if v is None:
         return []

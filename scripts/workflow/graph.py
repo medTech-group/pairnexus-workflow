@@ -37,6 +37,7 @@ from . import estimate as estimate_mod
 from . import evidence as evidence_mod
 from . import issues as issues_mod
 from . import presets as presets_mod
+from . import profile as profile_mod
 from . import research as research_mod
 from . import small as small_mod
 from . import state as state_mod
@@ -486,7 +487,7 @@ class Result:
 
 
 def _shown(sentence: str, sensitive: list[str]) -> str:
-    return SENSITIVE if any(re.search(p, sentence) for p in sensitive) else sentence
+    return SENSITIVE if profile_mod.holds_sensitive(sentence, sensitive) else sentence
 
 
 def cites(root: Path, base: str, ids: list[Id], issues: list[dict], prs: list[dict], *, repo: str | None, sensitive: list[str], note) -> tuple[list[Result], list[str]]:
