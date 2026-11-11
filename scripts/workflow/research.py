@@ -1034,14 +1034,17 @@ def ascii_link(url: str) -> str:
 def fetch(url: str, timeout: float = FETCH_TIMEOUT, limit: int = FETCH_LIMIT) -> tuple[bytes, str]:
     """The page at a web link: its bytes and content type. Only http and https,
     redirects included; a link with letters outside ASCII is fetched as
-    `ascii_link` encodes it. Raises PageError with the reason it can't."""
-    url = ascii_link(url)
+    `ascii_link` encodes it, without its userinfo, as a browser sends it.
+    Raises PageError with the reason it can't."""
+    link, url = url, ascii_link(url)
     try:
         parts = urllib.parse.urlsplit(url)
     except ValueError as e:  # a bracketed host that isn't an IP address, say (#530)
         raise PageError(f"it isn't a well-formed link ({e})") from None
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise PageError("it isn't an http or https link")
+    if not link.isascii() and "@" in parts.netloc:  # as a browser sends it
+        url = url.replace(parts.netloc, parts.netloc.rpartition("@")[2], 1)
     opener = urllib.request.OpenerDirector()
     for h in (
         urllib.request.ProxyHandler(),

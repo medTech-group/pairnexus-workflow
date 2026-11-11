@@ -335,7 +335,7 @@ def test_one_helper_refuses_a_link_with_a_space_a_control_character_or_angle_bra
         ("http://\u4f8b\u3048.\u30c6\u30b9\u30c8:8080/", "GET http://xn--r8jz45g.xn--zckzah:8080/ HTTP/1.1"),
         ("http://\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/", "GET http://xn--e1afmkfd.xn--p1ai/ HTTP/1.1"),
         ("http://cafe\u0301.example/", "GET http://xn--caf-dma.example/ HTTP/1.1"),  # NFC first
-        ("http://us\u00e9r:p\u00e4ss@fa\u00df.de/p\u00e4th", "GET http://us%C3%A9r:p%C3%A4ss@xn--fa-hia.de/p%C3%A4th HTTP/1.1"),
+        ("http://us\u00e9r:p\u00e4ss@fa\u00df.de/p\u00e4th", "GET http://xn--fa-hia.de/p%C3%A4th HTTP/1.1"),
         ("https://fa\u00df.de/", "CONNECT xn--fa-hia.de:443 HTTP/1.1"),
     ],
     ids=["eszett", "upper-ascii", "final-sigma", "japanese-port", "cyrillic", "decomposed", "userinfo", "https"],
@@ -382,6 +382,29 @@ def test_link_spoofing(project, seen, monkeypatch, link):
 )
 def test_page_fetching_host(project, seen, monkeypatch, link):
     _refused_before_any_request(project, seen, monkeypatch, link)
+
+
+def test_the_userinfo_of_a_link_outside_ascii_is_encoded():
+    assert research.ascii_link("http://us\u00e9r:p\u00e4ss@fa\u00df.de/p\u00e4th") == "http://us%C3%A9r:p%C3%A4ss@xn--fa-hia.de/p%C3%A4th"
+    assert research.ascii_link("https://us%C3%A9r@fa\u00df.de/") == "https://us%C3%A9r@xn--fa-hia.de/"
+
+
+@pytest.mark.parametrize(
+    "link,sent",
+    [
+        ("https://\u00fc@apple.com/docs", "CONNECT apple.com:443 HTTP/1.1"),
+        ("https://evil.de%2F@apple.com/\u00fc", "CONNECT apple.com:443 HTTP/1.1"),
+        ("http://us\u00e9r@fa\u00df.de/", "GET http://xn--fa-hia.de/ HTTP/1.1"),
+        ("http://user@example.com/", "GET http://user@example.com/ HTTP/1.1"),  # a link in ASCII: as before #532
+    ],
+    ids=["1", "2", "3", "4"],
+)
+def test_page_fetching(project, seen, link, sent):
+    base, requests = seen
+    assert research.link_problem(link) is None
+    p = _cli("fingerprint", link, "--fetch", env=_proxied(project, base))
+    assert p.returncode == 1 and "can't fetch" in p.stderr and "Traceback" not in p.stderr  # the proxy answers 404
+    assert [r.rsplit(" ", 1)[0] for r in requests] == [sent.rsplit(" ", 1)[0]]  # without the HTTP version: Python 3.11 sends CONNECT as HTTP/1.0
 
 
 @pytest.mark.parametrize("link,sent", [("http://a-\u00fc9.de/", "GET http://xn--a-9-ioa.de/ HTTP/1.1"), ("http://\u00fc.a-1.de/", "GET http://xn--tda.a-1.de/ HTTP/1.1")])
