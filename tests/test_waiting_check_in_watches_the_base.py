@@ -3,8 +3,8 @@ the base. Every waiting check-in, whatever the session waits on, runs
 `WF merge-check` on the head while the pull request is open, and on `conflict`
 merges the base in at once. A head it queued is watched by one rule under one
 name, "a queued head in conflict" (#685): it only waits until `WF merge-check`
-gives it a `conflict`. The stay for the evidence report is left to §6 step 5
-(#686). `build-ticket` is read as
+gives it a `conflict`. The stay for the evidence report is left to §6 step 5,
+which merges the base in on a conflict too (#686). `build-ticket` is read as
 a text contract (seam 2), and the briefing's **Check-ins** line is rendered
 through the CLI, as `tests/test_evidence_never_holds_the_merge.py` renders
 briefings, the **Merging** lines too."""
@@ -163,16 +163,19 @@ def test_the_evidence_to_come_never_holds_a_queued_head_in_conflict():
 
 
 def test_the_watch_leaves_the_evidence_stay_to_section_6_step_5():
-    # the watch makes no rule of its own for the stay (#686's): it points at
-    # §6 step 5's "Then stay", whose text is as it was
+    # the watch makes no rule of its own for the stay: it points at §6 step
+    # 5's "Then stay", which gives the same answer on a conflict (#686), so
+    # §4 and step 5 never give two
     p = _paragraph()
-    assert "This watch doesn't apply while you stay for your evidence report: §6 step 5's \"Then stay\" says what the stay does." in p
+    assert "While you stay for your evidence report, §6 step 5's \"Then stay\" says what the stay does, and it gives the same answer" in p
+    assert "This watch doesn't apply while you stay" not in p
     assert "wins over" not in p
     six = _section(BUILD_TICKET.read_text(), "## 6. Post the evidence and merge", "## 7. End each turn")
-    stay = _flat(_section(six, "**Then stay**", "6. **The claim label.**"))
-    assert "Leave your checkout as it is (no pull, no edit: the run stops if your head moves)" in stay
-    assert stay.rstrip().endswith("Then end `done`.")
-    assert "watches the base" not in stay
+    stay = _flat(_section(six, "**Then stay**", "**A conflict while you stay.**"))
+    assert "Leave your checkout as it is (no pull, no edit: the run stops if your head moves), except to merge the base in for a conflict (below)" in stay
+    assert stay.rstrip(" -").endswith("Then end `done`.")
+    conflict = _flat(_section(six, "**A conflict while you stay.**", "6. **The claim label.**"))
+    assert "as §4's \"Every waiting check-in watches the base\" does" in conflict
 
 
 def test_the_base_moved_bullet_still_resolves_a_conflict_with_the_queue_on():
@@ -262,7 +265,7 @@ def test_the_rendered_check_ins_line_keeps_the_evidence_stay_whole_as_section_4_
     line = lines[0]
     assert line.endswith("the stay for the evidence report follows `build-ticket` §6 step 5 instead.")
     assert "once the PR has merged" not in line
-    assert "This watch doesn't apply while you stay for your evidence report:" in _paragraph()
+    assert "While you stay for your evidence report, §6 step 5's \"Then stay\" says what the stay does" in _paragraph()
 
 
 @pytest.mark.parametrize("mode", ["auto-merge", "session"])
