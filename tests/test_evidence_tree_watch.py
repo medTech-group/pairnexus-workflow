@@ -11,6 +11,7 @@ The suite's runner (from `test_evidence_tree`) stands in for the session working
 beside the run: after the shard holding a given file it carries out the action
 written in `.workflow/act`, once, and logs each shard it runs to `.workflow/ran`."""
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -136,6 +137,25 @@ def test_the_report_note_keeps_each_changed_name_whole(tmp_path, monkeypatch, ca
     assert "``back`tick.txt``" in lines[i]
     assert "`notes.txt`" not in lines[i]
     assert evidence._code("`a`") == "`` `a` ``"  # a name that starts or ends with a backtick is padded
+
+
+def test_the_report_note_quotes_a_name_outside_ascii_as_git_does(tmp_path, monkeypatch, capsys):
+    # A name that isn't UTF-8 never stops the report; it, and a name with a
+    # character some readers take for a line break, is quoted as git quotes it.
+    root = _repo(tmp_path)
+    odd = [b"caf\xe9.txt", "line sep.txt".encode(), "next\x85line.txt".encode()]
+    for name in odd:
+        (root / os.fsdecode(name)).write_text("a\n")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "odd names")
+    _act(root, "tests/test_1.txt", "python3 -c \"import os\nfor n in os.listdir('.'):\n    n.endswith('.txt') and open(n, 'a').write('x')\"")
+    assert _evidence(monkeypatch, root) == 0
+    lines = capsys.readouterr().out.splitlines()
+    note = next(l for l in lines if "while it ran" in l)
+    assert '`"caf\\351.txt"`' in note
+    assert '`"line\\342\\200\\250sep.txt"`' in note
+    assert '`"next\\302\\205line.txt"`' in note
+    assert all(ord(c) < 0x80 for c in note)
 
 
 def test_a_change_in_the_repair_window_makes_a_dirty_report(tmp_path, monkeypatch, capsys):

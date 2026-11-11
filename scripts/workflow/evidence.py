@@ -172,11 +172,10 @@ def _git_quoted(name: str) -> str:
 
 
 def _code(name: str) -> str:
-    """`name` as a Markdown code span on one line: quoted as git quotes it
-    (C-style) when it holds a control character, a double quote or a
-    backslash, and fenced with one backtick more than its longest run of them."""
-    if re.search(r'[\x00-\x1f\x7f"\\]', name):
-        name = '"' + re.sub(r'[\x00-\x1f\x7f"\\]', lambda m: _C_QUOTED.get(m[0], f"\\{ord(m[0]):03o}"), name) + '"'
+    """`name` as a Markdown code span on one line, in ASCII: quoted as git
+    quotes it (`_git_quoted`), and fenced with one backtick more than its
+    longest run of them."""
+    name = _git_quoted(name)
     fence = "`" * (max((len(r) for r in re.findall("`+", name)), default=0) + 1)
     pad = " " if name.startswith("`") or name.endswith("`") else ""
     return f"{fence}{pad}{name}{pad}{fence}"
