@@ -431,7 +431,10 @@ def runs(issues: list[dict]) -> Runs:
         if st is None:
             got.unread.append(f"run #{n}: its state isn't written yet, so its by-hand issue isn't told apart")
             continue
-        h = st.get("by_hand_issue") if isinstance(st, dict) else None
+        if not isinstance(st, dict):
+            got.unread.append(f"run #{n}: its state can't be read (it isn't a JSON object), so its by-hand issue isn't told apart")
+            continue
+        h = st.get("by_hand_issue")
         if isinstance(h, int) and not isinstance(h, bool):
             got.by_hand.add(h)
         elif h is not None:

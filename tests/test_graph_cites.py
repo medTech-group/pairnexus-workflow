@@ -435,6 +435,13 @@ def test_a_run_whose_state_names_no_by_hand_issue_it_can_read_is_named(root, mon
     assert _kinds(_one(monkeypatch, capsys, root, "#12", issues=issues)) == {28: "ticket"}
 
 
+
+def test_a_run_whose_state_isnt_a_json_object_is_named(root, monkeypatch, capsys):
+    state = "<!-- workflow-state:begin -->\n```json\n[1, 2]\n```\n<!-- workflow-state:end -->\n"
+    code, out, err = _run(monkeypatch, capsys, root, "#12", issues=[_issue(25, "Tracking.\n\n" + state, labels=["workflow:run"])])
+    assert code == 0
+    assert "run #25: its state can't be read (it isn't a JSON object), so its by-hand issue isn't told apart" in out
+
 def test_a_lock_that_cant_be_read_leaves_nothing_out_and_says_so(root, monkeypatch, capsys):
     _push(root, {".claude/workflow/lock.json": "not json", ".claude/skills/x/SKILL.md": "For #12.\n"})
     code, out, err = _run(monkeypatch, capsys, root, "#12", "--json")
