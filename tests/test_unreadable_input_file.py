@@ -185,6 +185,19 @@ def test_a_command_with_its_own_wording_keeps_it(tmp_path):
     assert p.stderr.strip() == "workflow protection: can't read the rulesets file missing.json: No such file or directory", p.stderr
 
 
+def test_changelog_note_names_each_charter_file_that_keeps_its_own_wording():
+    """`charter estimate`'s files, `charter markdown`'s --estimate and `charter
+    splice`'s --body and --estimate word a file they can't read themselves:
+    the note lists them with the commands that word it as before, never
+    `charter` whole among those refused in one line."""
+    note = entry("#687")
+    opening, rest = note.split("\n\n", 1)
+    assert "`charter`" not in opening, opening
+    as_before = rest[rest.index("A command that already worded"):].split("\n")[0]
+    for words in ("`charter estimate`", "`charter markdown`'s `--estimate`", "`charter splice`'s `--body` and `--estimate`"):
+        assert words in as_before, as_before
+
+
 def test_changelog_note_without_bumping_version():
     note = entry("#687")
     assert "#727" in note
