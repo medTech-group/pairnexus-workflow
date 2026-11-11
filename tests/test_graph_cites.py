@@ -560,7 +560,7 @@ def test_it_uses_the_shared_issue_helpers_not_copies_of_them():
     src = inspect.getsource(graph)
     for copy in ("def _items(", "def _number(", "def _open(", "def _plural(", "other.casefold() == repo.casefold()"):
         assert copy not in src, copy
-    assert "_fetch_items(" in inspect.getsource(cli.cmd_graph)
+    assert "_fetch_items(" in inspect.getsource(cli._graph_items) and "_graph_items(" in inspect.getsource(cli.cmd_graph)
 
 
 def test_it_uses_the_shared_constants_not_copies_of_them():
@@ -613,3 +613,28 @@ def test_git_failing_after_the_fetch_is_one_line_not_a_traceback(root, monkeypat
     code, out, err = _run(monkeypatch, capsys, root, "#12")
     assert code == 1 and out == ""
     assert err.startswith("workflow graph cites: git grep failed") and err.count("\n") == 1, err
+
+
+BAD_CREDENTIALS = {"message": "Bad credentials", "documentation_url": "https://docs.github.com/rest", "status": "401"}
+
+
+@pytest.mark.parametrize("value", [BAD_CREDENTIALS, [BAD_CREDENTIALS], "Bad credentials", [[_issue(20, "For #12.")], "x"], [{"number": 0}]])
+@pytest.mark.parametrize("flag", ["--issues", "--prs"])
+def test_an_input_that_isnt_a_list_of_issues_is_refused(root, monkeypatch, capsys, value, flag):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    good, bad = root.parent / "good.json", root.parent / "bad.json"
+    good.write_text("[]")
+    bad.write_text(json.dumps(value))
+    files = {"--issues": good, "--prs": good, flag: bad}
+    code = cli.main(["graph", "cites", "#12", *[x for k, v in files.items() for x in (k, str(v))]])
+    out = capsys.readouterr()
+    assert code == 2 and out.out == ""
+    assert out.err.startswith(f"workflow graph cites: {flag} isn't a list of ") and out.err.count("\n") == 1, out.err
+
+
+def test_fetch_that_gives_no_list_of_issues_is_refused(root, monkeypatch, capsys, tmp_path):
+    fake_gh.install(tmp_path, monkeypatch, {"repos/acme/demo/issues": BAD_CREDENTIALS, "repos/acme/demo/pulls": fake_gh.pages([])})
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    assert cli.main(["graph", "cites", "#12", "--fetch"]) == 1
+    out = capsys.readouterr()
+    assert out.out == "" and out.err.startswith("workflow graph cites: gh api's issues aren't a list of ") and out.err.count("\n") == 1, out.err
