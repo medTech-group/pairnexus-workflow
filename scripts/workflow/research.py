@@ -989,11 +989,11 @@ def _percent_encoded(text: str) -> str:
 
 
 def ascii_link(url: str) -> str:
-    """The link as it is fetched: in ASCII, as a browser sends it. A link in
-    ASCII is returned as it is. Otherwise its host is encoded by UTS 46
-    non-transitional rules (`_ascii_host`), and its userinfo, path, query and
-    fragment have each character outside ASCII percent-encoded as UTF-8, `%`
-    escapes left alone. Raises PageError for what can't be encoded: a space,
+    """The link in ASCII. A link in ASCII is returned as it is. Otherwise its
+    host is encoded by UTS 46 non-transitional rules (`_ascii_host`), and its
+    userinfo, path, query and fragment have each character outside ASCII
+    percent-encoded as UTF-8, `%` escapes left alone; `fetch` sends it without
+    its userinfo, as a browser does. Raises PageError for what can't be encoded: a space,
     a control character, `<` or `>` in ASCII, a lone
     surrogate (a byte that isn't UTF-8 in the command line), a space, line
     break, format or private-use character outside ASCII (no key-source line

@@ -1748,6 +1748,26 @@ def test_the_changelog_note_for_links_outside_ascii_is_not_under_a_released_vers
     assert log.index("(#532, split out of #506") < released
 
 
+def test_the_words_say_a_link_outside_ascii_is_fetched_without_its_userinfo():
+    """#532: `fetch` sends a link outside ASCII without its userinfo, as a
+    browser does. The skill, the changelog's note, the architecture page and
+    `ascii_link`'s docstring say so, and none of them says the userinfo is sent."""
+    log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
+    entry = log[log.index("(#532, split out of #506") :]
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    places = {
+        "the study skill": SKILL.read_text(encoding="utf-8"),
+        "CHANGELOG.md": entry[: entry.index("\n\n")],
+        "the architecture page": next(l for l in page.splitlines() if l.startswith("- `ascii_link`")),
+        "ascii_link": research.ascii_link.__doc__,
+    }
+    for where, text in places.items():
+        text = re.sub(r"\s+", " ", text)
+        assert "without its userinfo" in text, where
+        assert "its userinfo, path, query and fragment percent-encoded" not in text, where
+        assert "as it is fetched" not in text and "as `workflow research` fetches it" not in text, where
+
+
 def test_the_changelog_says_how_a_fingerprint_file_is_found():
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     entry = log[log.index("**A research note's `## Key sources` section can be followed by other sections**") :]
