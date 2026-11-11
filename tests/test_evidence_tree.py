@@ -1,4 +1,6 @@
-"""#671: a background evidence run never reports a tree it didn't test.
+"""#671: a background evidence run never reports a tree it didn't test: a shard
+the head moved under is never kept, and the session stops the run before
+changing its checkout.
 
 The suite's runner below stands in for the session working beside the run: after
 the shard holding a given file, it carries out an action written in
@@ -77,142 +79,11 @@ def _store(root) -> Path:
     return root / ".workflow/evidence" / git(root, "rev-parse", "HEAD").strip()
 
 
-# ---------- 1. a changed tree is never reported as the commit's ----------
-#
-# The run can't tell a tracked file its suites or repair commands wrote from one
-# the session changed beside it, so it never stops for one (AC 3): from that
-# shard on, what it runs is kept apart from the commit's, and its report is a
-# dirty one, which merge-check never counts (AC 1).
-
-
 def _sha(root) -> str:
     return git(root, "rev-parse", "HEAD").strip()
 
 
-def test_a_tracked_file_changed_mid_run_makes_a_dirty_report(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    _act(root, "tests/test_1.txt", "echo fail > tests/test_2.txt")
-    assert _evidence(monkeypatch, root) == 1
-    cap = capsys.readouterr()
-    # Never a report that names the commit as tested: its first line says it isn't.
-    assert cap.out.splitlines()[0] == evidence.headline(_sha(root), False, dirty=True)
-    assert "tests/test_2.txt" in cap.out and "changed while it ran" in cap.out
-    # The shard the change landed in isn't kept as the commit's; the one before it is.
-    assert (_store(root) / "unit-000.json").exists()
-    assert not (_store(root) / "unit-001.json").exists()
-    assert not (_store(root) / "unit-002.json").exists()
-
-
-def test_a_merge_left_in_conflict_mid_run_makes_a_dirty_report(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    git(root, "checkout", "-qb", "other")
-    (root / "notes.txt").write_text("other\n")
-    git(root, "commit", "-qam", "other")
-    git(root, "checkout", "-q", "main")
-    (root / "notes.txt").write_text("main\n")
-    git(root, "commit", "-qam", "main")
-    _act(root, "tests/test_0.txt", "git merge -q other || true")
-    assert _evidence(monkeypatch, root) == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY) and "notes.txt" in out
-    assert not (_store(root) / "unit-000.json").exists()
-
-
-def test_a_file_staged_mid_run_makes_a_dirty_report(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    _act(root, "tests/test_0.txt", "echo pass > tests/test_9.txt && git add tests/test_9.txt")
-    assert _evidence(monkeypatch, root) == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY) and "tests/test_9.txt" in out
-
-
-def test_an_untracked_file_that_appears_mid_run_is_named_in_the_report(tmp_path, monkeypatch, capsys):
-    # The run can't tell a file the suite wrote from one the session added, so it
-    # finishes (AC 3) and names the file; the session's own steps (build-ticket
-    # §6 step 2) keep it from adding one while the run goes.
-    root = _repo(tmp_path)
-    _act(root, "tests/test_0.txt", "echo pass > tests/test_9.txt")
-    assert _evidence(monkeypatch, root) == 0
-    out = capsys.readouterr().out
-    assert re.search(r"Files that appeared while it ran.*`tests/test_9\.txt`", out)
-    assert "NOT A PROOF" not in out.splitlines()[0]
-
-
-def test_shards_run_beside_a_file_that_appeared_are_never_reused(tmp_path, monkeypatch, capsys):
-    # A file added beside the run (here `skip`, which makes the suite pass) may
-    # be named in the report, but what ran beside it is never the commit's.
-    root = _repo(tmp_path, run="if [ -f skip ]; then echo 1 passed; else python3 run_tests.py {files}; fi")
-    (root / "tests/test_1.txt").write_text("fail")
-    git(root, "commit", "-qam", "test_1 fails")
-    _act(root, "tests/test_0.txt", "touch skip")
-    assert _evidence(monkeypatch, root) == 0
-    assert "`skip`" in capsys.readouterr().out
-    (root / "skip").unlink()
-    assert _evidence(monkeypatch, root) == 1
-    out = capsys.readouterr().out
-    assert out.splitlines()[0] == evidence.headline(_sha(root), False) and "`skip`" not in out
-
-
-def test_a_later_suite_run_beside_a_file_that_appeared_runs_again(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    prof = root / ".claude/workflow/profile.toml"
-    prof.write_text(
-        prof.read_text().replace('files = "tests/test_*.txt"', 'files = "tests/test_0.txt"')
-        + '[[commands.suite]]\nname = "py"\n'
-        + 'run = "if [ -f pyt/conftest.py ]; then echo 1 passed; else echo 1 failed; exit 1; fi"\n'
-    )
-    git(root, "commit", "-qam", "two suites")
-    _act(root, "tests/test_0.txt", "mkdir -p pyt && touch pyt/conftest.py")
-    assert _evidence(monkeypatch, root) == 0
-    assert "`pyt/conftest.py`" in capsys.readouterr().out
-    (root / "pyt/conftest.py").unlink()
-    assert _evidence(monkeypatch, root) == 1  # the `py` shard runs again, without the file
-    assert capsys.readouterr().out.splitlines()[0] == evidence.headline(_sha(root), False)
-
-
-@pytest.mark.parametrize("args", [(), ("--allow-dirty",)])
-def test_an_edit_undone_before_the_shard_ends_still_makes_a_dirty_report(tmp_path, monkeypatch, capsys, args):
-    # The session edits a test, the suite reads it, the session undoes the edit:
-    # by the time the shard ends the tree is the commit's again.
-    root = _repo(tmp_path)
-    (root / "tests/test_1.txt").write_text("fail")
-    git(root, "commit", "-qam", "test_1 fails")
-    real_run = evidence.run_shard
-
-    def run_shard(suite, i, files, cwd, **kw):
-        if i == 1:
-            (root / "tests/test_1.txt").write_text("pass")
-        r = real_run(suite, i, files, cwd, **kw)
-        if i == 1:
-            git(root, "checkout", "--", "tests/test_1.txt")
-        return r
-
-    monkeypatch.setattr(evidence, "run_shard", run_shard)
-    assert _evidence(monkeypatch, root, *args) == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0] == evidence.headline(_sha(root), True, dirty=True)
-    assert "tests/test_1.txt" in out
-    assert not (_store(root) / "unit-001.json").exists()
-    monkeypatch.setattr(evidence, "run_shard", real_run)
-    assert _evidence(monkeypatch, root) == 1  # a clean run on the commit runs shard 1 again
-    assert capsys.readouterr().out.splitlines()[0] == evidence.headline(_sha(root), False)
-
-
-# ---------- 2. an interrupted shard is never reused ----------
-
-
-def test_a_shard_run_on_a_changed_tree_runs_again_on_the_next_run(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    _act(root, "tests/test_1.txt", "echo v2 > notes.txt")
-    assert _evidence(monkeypatch, root) == 0
-    assert capsys.readouterr().out.splitlines()[0].endswith(evidence.DIRTY)
-    assert _ran(root) == ["tests/test_0.txt", "tests/test_1.txt", "tests/test_2.txt"]
-    git(root, "checkout", "--", "notes.txt")  # the tree is clean again, on the same commit
-    assert _evidence(monkeypatch, root) == 0
-    # Shard 0 finished before the change and is reused; shard 1 and 2 run again.
-    assert _ran(root)[3:] == ["tests/test_1.txt", "tests/test_2.txt"]
-    out = capsys.readouterr().out
-    assert out.splitlines()[0] == evidence.headline(_sha(root), True) and "3 passed" in out
+# ---------- 1. a shard the head moved under is never reused ----------
 
 
 def test_a_shard_the_head_moved_under_runs_again_on_that_commit(tmp_path, monkeypatch, capsys):
@@ -227,65 +98,7 @@ def test_a_shard_the_head_moved_under_runs_again_on_that_commit(tmp_path, monkey
     assert _ran(root)[2:] == ["tests/test_1.txt", "tests/test_2.txt"]
 
 
-def test_an_edit_committed_as_the_shard_ends_never_keeps_the_shard(tmp_path, monkeypatch, capsys):
-    # The session edits a test during shard 1, then commits it just as the
-    # shard ends, between the run's head check and its tree check.
-    root = _repo(tmp_path)
-    (root / "tests/test_1.txt").write_text("fail")
-    git(root, "commit", "-qam", "test_1 fails")
-    sha = _sha(root)
-    real_run, real_head = evidence.run_shard, evidence.head_sha
-    step = {"ran": False, "committed": False}
-
-    def run_shard(suite, i, files, cwd, **kw):
-        if i == 1:
-            (root / "tests/test_1.txt").write_text("pass")
-            step["ran"] = True
-        return real_run(suite, i, files, cwd, **kw)
-
-    def head_sha(r):
-        if step["ran"] and not step["committed"]:
-            step["committed"] = True
-            git(root, "commit", "-qam", "edit")
-            return sha
-        return real_head(r)
-
-    monkeypatch.setattr(evidence, "run_shard", run_shard)
-    monkeypatch.setattr(evidence, "head_sha", head_sha)
-    assert _evidence(monkeypatch, root) == 1
-    assert "HEAD moved" in capsys.readouterr().err
-    assert step["committed"]
-    assert not (root / ".workflow/evidence" / sha / "unit-001.json").exists()
-
-
-def test_a_failing_shard_is_never_saved_as_passing_when_the_tree_changed(tmp_path, monkeypatch, capsys):
-    # #670 round 2: a shard saved as ok before the stop made a restart report a
-    # passing commit whose test fails. Here the session's edit makes the shard pass
-    # (test_1 reads "pass" at the time it runs); the commit's own test_1 fails.
-    root = _repo(tmp_path)
-    (root / "tests/test_1.txt").write_text("fail")
-    git(root, "commit", "-qam", "test_1 fails")
-    _act(root, "tests/test_0.txt", "echo pass > tests/test_1.txt")
-    assert _evidence(monkeypatch, root) == 0  # every shard passed, on a tree that wasn't the commit
-    assert capsys.readouterr().out.splitlines()[0] == evidence.headline(_sha(root), True, dirty=True)
-    git(root, "checkout", "--", "tests/test_1.txt")
-    assert _evidence(monkeypatch, root) == 1
-    assert capsys.readouterr().out.splitlines()[0] == evidence.headline(_sha(root), False)
-
-
-# ---------- 3. files the run writes itself ----------
-
-
-def test_a_suite_that_writes_a_tracked_file_finishes_with_a_dirty_report(tmp_path, monkeypatch, capsys):
-    # It can't be told from the session's edit, so the report isn't the commit's;
-    # the run still finishes, and says what to do (AC 3).
-    root = _repo(tmp_path, run="python3 run_tests.py {files} && date >> notes.txt")
-    assert _evidence(monkeypatch, root) == 0
-    cap = capsys.readouterr()
-    assert cap.out.splitlines()[0] == evidence.headline(_sha(root), True, dirty=True)
-    assert "3 passed" in cap.out and "(notes.txt)" in cap.out
-    assert "If the suites or the `[repair]` commands write them, make them write elsewhere" in cap.out
-    assert not any(_store(root).glob("unit-*.json"))  # nothing kept as the commit's
+# ---------- 2. files the run writes itself still let it finish ----------
 
 
 def test_a_suite_that_writes_files_not_ignored_still_finishes(tmp_path, monkeypatch, capsys):
@@ -305,104 +118,9 @@ def test_a_repair_command_that_writes_files_not_ignored_still_finishes(tmp_path,
     out = capsys.readouterr().out
     assert out.splitlines()[0] == evidence.headline(_sha(root), False)
     assert "2 passed, 1 failed" in out  # every shard ran: nothing stopped it
-    assert "`repaired.log`" in out
 
 
-def test_a_repair_command_that_writes_a_tracked_file_finishes_with_a_dirty_report(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path, repair="date >> notes.txt")
-    (root / "tests/test_0.txt").write_text("fail")
-    git(root, "commit", "-qam", "test_0 fails")
-    assert _evidence(monkeypatch, root) == 1
-    out = capsys.readouterr().out
-    assert out.splitlines()[0] == evidence.headline(_sha(root), False, dirty=True)
-    assert "2 passed, 1 failed" in out and "(notes.txt)" in out
-
-
-def test_a_tracked_file_changed_while_the_repair_ran_is_never_the_commits(tmp_path, monkeypatch, capsys):
-    # The repair stands in for a slow `npm ci` during which the session edits a
-    # test: the commit's test_1 fails, the edited one passes.
-    root = _repo(tmp_path, repair="echo pass > tests/test_1.txt")
-    (root / "tests/test_1.txt").write_text("fail")
-    git(root, "commit", "-qam", "test_1 fails")
-    assert _evidence(monkeypatch, root) == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0] == evidence.headline(_sha(root), True, dirty=True)
-    assert "tests/test_1.txt" in out
-    assert not any(_store(root).glob("unit-*.json"))
-
-
-# ---------- 4. --allow-dirty keeps the marker ----------
-
-
-def test_allow_dirty_on_a_clean_start_marks_a_tree_that_changed_mid_run(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    _act(root, "tests/test_1.txt", "echo v2 > notes.txt")
-    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY)
-    assert "notes.txt" in out and "changed while it ran" in out
-    # Nothing that ran on the changed tree is kept as the commit's own: a clean
-    # run on the commit runs shards 1 and 2 again, and reuses shard 0.
-    git(root, "checkout", "--", "notes.txt")
-    capsys.readouterr()
-    assert _evidence(monkeypatch, root) == 0
-    assert _ran(root)[3:] == ["tests/test_1.txt", "tests/test_2.txt"]
-    assert not capsys.readouterr().out.splitlines()[0].endswith(evidence.DIRTY)
-
-
-def test_allow_dirty_marks_a_tracked_file_changed_while_the_repair_ran(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path, repair="echo v2 > notes.txt")
-    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY) and "(notes.txt)" in out
-    assert not any(_store(root).glob("unit-*.json"))
-
-
-def test_allow_dirty_marks_a_tracked_file_changed_while_the_suites_were_chosen(tmp_path, monkeypatch, capsys):
-    # The selection runs the profile's selector, for up to two minutes, before
-    # any suite runs: a change in that time is on the tree the suites run on.
-    root = _repo(tmp_path)
-
-    def select(profile, r, ref, base_sha):
-        (root / "notes.txt").write_text("v2\n")
-        return evidence.Selection(["unit"])
-
-    monkeypatch.setattr(evidence, "select", select)
-    monkeypatch.setattr(evidence, "base_count_from_ref", lambda *a, **k: evidence.BaseCount(ref="main", sha=_sha(root), count=3))
-    assert _evidence(monkeypatch, root, "--allow-dirty", "--base-ref", "main") == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY) and "notes.txt" in out
-
-
-def test_allow_dirty_marks_an_untracked_file_that_appeared_mid_run(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    _act(root, "tests/test_0.txt", "echo pass > tests/test_9.txt")
-    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY)
-    assert "tests/test_9.txt" in out
-
-
-def test_allow_dirty_marks_a_new_file_whatever_git_status_shows(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    git(root, "config", "status.showUntrackedFiles", "no")
-    _act(root, "tests/test_1.txt", "echo x > extra.txt")
-    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY) and "(extra.txt)" in out
-
-
-def test_allow_dirty_on_a_dirty_start_names_what_changed_mid_run(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    (root / "notes.txt").write_text("dirty at the start\n")
-    _act(root, "tests/test_0.txt", "echo fail > tests/test_2.txt")
-    assert _evidence(monkeypatch, root, "--allow-dirty") == 1
-    out = capsys.readouterr().out
-    assert out.splitlines()[0].endswith(evidence.DIRTY)
-    assert "tests/test_2.txt" in out and "changed while it ran" in out
-
-
-# ---------- 5. the session's own steps ----------
+# ---------- 3. the session's own steps ----------
 
 
 def _section_6_step_2(text: str) -> str:
@@ -420,7 +138,7 @@ def test_build_ticket_stops_the_background_run_before_changing_the_checkout(path
         assert word in rule, word
 
 
-# ---------- 6. the page's helpers (the overview's "Reuse, not copies") ----------
+# ---------- 4. the page's helpers (the overview's "Reuse, not copies") ----------
 
 
 def _helpers() -> str:
@@ -432,21 +150,12 @@ def test_the_path_list_is_one_helper_listed_in_its_page(tmp_path):
     assert re.search(r"^- `_paths`: ", _helpers(), re.M)
     names = [f"f{i}.txt" for i in range(7)]
     assert evidence._paths(names) == "f0.txt, f1.txt, f2.txt, f3.txt, f4.txt and 2 more"
-    assert evidence._paths(names, code=True).startswith("`f0.txt`, `f1.txt`") and " and 2 more" in evidence._paths(names, code=True)
-    # require_clean and the report's "appeared" line name paths the same way.
+    # require_clean names its paths with it.
     root = _repo(tmp_path)
     for n in names:
         (root / n).write_text("x")
     with pytest.raises(evidence.EvidenceError, match=re.escape(evidence._paths(names))):
         evidence.require_clean(root)
-
-
-def test_the_report_names_files_that_appeared_with_the_path_helper(tmp_path, monkeypatch, capsys):
-    root = _repo(tmp_path)
-    names = [f"out{i}.txt" for i in range(7)]
-    _act(root, "tests/test_2.txt", "touch " + " ".join(names))
-    assert _evidence(monkeypatch, root) == 0
-    assert evidence._paths(names, code=True) + "." in capsys.readouterr().out
 
 
 def test_the_dirty_store_is_one_helper_listed_in_its_page(tmp_path):
@@ -462,9 +171,8 @@ def test_the_dirty_store_is_one_helper_listed_in_its_page(tmp_path):
 def test_the_pages_rule_says_what_each_check_does():
     page = (ROOT / "docs/architecture/scripts--workflow.md").read_text()
     rule = page.split("\n## Rules\n", 1)[1]
-    # True for the code: the base branch's worktree is checked only for a moved
-    # head, the repair's window is checked like a shard's, and a changed tree
-    # keeps what ran apart rather than stopping the run.
-    for words in ("base branch's worktree", "only for a moved head", "`[repair]`", "`<sha>-dirty`", "never reused"):
+    # True for the code: HEAD is checked before a shard's result is kept, and
+    # the working tree only at the start.
+    for words in ("only after checking", "HEAD", "nothing kept for that shard", "only at its start"):
         assert words in rule, words
-    assert "either stops the run" not in rule
+    assert "untracked" not in rule and "changed tree" not in rule
