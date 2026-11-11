@@ -166,12 +166,32 @@ def test_in_a_shallow_clone_where_the_head_left_the_base_is_out_of_reach_until_i
     assert git(clone, "merge-base", "HEAD", f"{merge}^1").strip() == git(origin, "merge-base", "pr", f"{merge}^1").strip()
 
 
+def test_in_a_shallow_clone_made_after_the_merge_the_merge_commits_parent_is_no_object_until_it_is_unshallowed(tmp_path):
+    # Round 3 of #726: a clone of every branch at depth 1, made after the merge
+    # (a container set up again), already has the base branch's latest, so
+    # `git fetch origin <base>` brings nothing; the merge commit's parents sit
+    # beyond its edge, and `git merge-base` fails rather than printing nothing.
+    origin, merge = _merged_behind(tmp_path / "origin")
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", "--depth", "1", "--no-single-branch", "--branch", "pr", f"file://{origin}", str(clone))
+    git(clone, "fetch", "-q", "origin", "main")
+    found = subprocess.run(["git", "merge-base", "HEAD", f"{merge}^1"], cwd=clone, capture_output=True, text=True)
+    assert (found.returncode, found.stdout) == (128, "")
+    assert "Not a valid object name" in found.stderr
+    git(clone, "fetch", "-q", "--unshallow")
+    assert git(clone, "merge-base", "HEAD", f"{merge}^1").strip() == git(origin, "merge-base", "pr", f"{merge}^1").strip()
+
+
 def test_build_ticket_never_restarts_with_an_empty_base_ref():
     rule = _restart()
+    # Both ways a shallow clone gives no commit: nothing printed (exit 1), and
+    # the merge commit's parent out of reach (exit 128).
     assert (
-        "If `git merge-base` prints nothing (a shallow clone, whose history stops short of where your head left the base), "
+        "If `git merge-base` prints no commit (nothing, or \"Not a valid object name\" for `<merge>^1`: "
+        "a shallow clone, whose history stops short of where your head left the base or of the merge commit's parents), "
         "`git fetch --unshallow` and run it again"
     ) in rule
+    assert "If `git merge-base` prints nothing (" not in rule
     assert "never pass an empty `--base-ref`" in rule
 
 
