@@ -17,6 +17,13 @@ def since_0110(text: str | None = None) -> str:
     return text[start:text.index("\n## 0.1.10\n", start)]
 
 
+def released(text: str | None = None) -> str:
+    """The latest released version: the heading after "## Unreleased",
+    without a leading "v"."""
+    text = (KIT / "CHANGELOG.md").read_text() if text is None else text
+    return text.split("\n## ")[2].split()[0].lstrip("v")
+
+
 def entry(ticket: str, notes: str | None = None) -> str:
     """The note whose heading ends with `(<ticket>).`, from that heading down
     to the next note's (#717)."""

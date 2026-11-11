@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from changelog_notes import entry
+from changelog_notes import entry, released
 
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / "scripts/workflow.py"
@@ -559,6 +559,18 @@ def test_merge_check_words_an_empty_path_as_the_note_says(tmp_path):
 def test_changelog_note_without_bumping_version():
     note = entry(NOTE)
     assert "#727" in note and "briefing verify" in note
-    text = (KIT / "CHANGELOG.md").read_text()
-    released = text.split("\n## ")[2].split()[0].lstrip("v")
-    assert (KIT / "VERSION").read_text().strip() == released
+    assert (KIT / "VERSION").read_text().strip() == released()
+
+
+def test_the_released_version_comes_from_the_shared_helper():
+    """The version under `## Unreleased` is read by `released` in
+    `changelog_notes.py`, listed on its architecture page, never copied here
+    (the architecture's "Reuse, not copies")."""
+    import inspect
+
+    import changelog_notes
+
+    assert changelog_notes.released("# Changelog\n\n## Unreleased\n\nA note.\n\n## v0.2.0\n\nOne.\n\n## 0.1.9\n") == "0.2.0"
+    source = inspect.getsource(test_changelog_note_without_bumping_version)
+    assert "released()" in source and ".split(" not in source, source
+    assert "- `released`: in `changelog_notes.py`" in (KIT / "docs/architecture/tests.md").read_text()
