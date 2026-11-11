@@ -3,7 +3,9 @@
 Runs each suite of the profile in shards against a clean checkout of one
 commit, keeping each shard's result and full output on disk under
 .workflow/evidence/<sha>/, so a container restart re-runs only the unfinished
-shards. The report names the command, head SHA, counts, duration and each
+shards. After each shard it checks HEAD before keeping the shard's result: a
+moved HEAD stops it, keeping nothing of that shard (`collect`). The report
+names the command, head SHA, counts, duration and each
 suite's output tail, the likely cause of a failure, and compares the count
 with the base branch's (given, or run on a worktree of the base), which also
 catches skipped tests. With `commands.select_suites` and a base ref, only the
@@ -141,6 +143,12 @@ def dirty_paths(root: Path) -> list[str]:
     return [l[3:] for l in out.stdout.splitlines() if l[3:] and not l[3:].startswith(".workflow/")]
 
 
+def _paths(names: list[str]) -> str:
+    """The first five of `names`, sorted, then "and N more"."""
+    names = sorted(names)
+    return ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+
+
 def checked_head(root: Path, allow_dirty: bool = False) -> str:
     """HEAD, after the same check `collect` makes, for a run with no suite to run."""
     if not allow_dirty:
@@ -154,8 +162,7 @@ def require_clean(root: Path) -> None:
         raise EvidenceError(
             "the working tree has uncommitted changes or untracked files, so a run wouldn't prove the commit "
             "(untracked tests change the result): "
-            + ", ".join(dirty[:5])
-            + (f" and {len(dirty) - 5} more" if len(dirty) > 5 else "")
+            + _paths(dirty)
             + ". Commit, stash or ignore them, or pass --allow-dirty to try a profile."
         )
 
@@ -312,6 +319,10 @@ def collect(
     suite whose files match nothing counts 0, with a line added to `notes`.
     Without clean_check (the base worktree, fresh from git, where only
     commands.setup has written) the tree isn't checked.
+
+    After each shard, before its result is kept, the run checks HEAD (#671):
+    HEAD moved stops it with nothing kept for that shard, so a later run on the
+    commit runs it again.
     """
     if allow_dirty:
         dirty = dirty_paths(root)
@@ -320,11 +331,11 @@ def collect(
             require_clean(root)
         dirty = []
     sha = head_sha(root)
-    base = (store or root / EVIDENCE_DIR) / (sha + ("-dirty" if dirty else ""))
     if dirty:
-        shutil.rmtree(base, ignore_errors=True)
-        fresh = True
-    base.mkdir(parents=True, exist_ok=True)
+        base, fresh = _dirty_store(store, root, sha), True
+    else:
+        base = (store or root / EVIDENCE_DIR) / sha
+        base.mkdir(parents=True, exist_ok=True)
     results: list[ShardResult] = []
     suites = [s for s in profile.suites if not only or s.name in only]
     if not suites:
@@ -360,12 +371,22 @@ def collect(
                 repaired = True
             r = run_shard(suite, i, files, root, log=_next_log(base, f"{suite.name}-{i:03d}"), log_root=log_root)
             r.previous_failures = earlier
+            # Checked before the result is kept: a shard the head moved under is never reused.
+            if head_sha(root) != sha:
+                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
             f.write_text(json.dumps(asdict(r)))
             results.append(r)
             last_failed = not r.ok
-            if head_sha(root) != sha:
-                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
     return sha, results
+
+
+def _dirty_store(store: Path | None, root: Path, sha: str) -> Path:
+    """`<sha>-dirty`, emptied: where a run keeps what didn't run on the commit
+    itself, apart from its evidence and never reused."""
+    base = (store or root / EVIDENCE_DIR) / (sha + "-dirty")
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 def resolve_ref(root: Path, ref: str) -> str:
