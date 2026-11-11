@@ -456,14 +456,12 @@ def cmd_protection(a) -> int:
     prints; sends nothing and writes nothing."""
 
     def given(path: str, what: str):
-        if not path:
-            raise protection_mod.ProtectionError(f"the {what} file was given no path")
         if path == "-" and sys.stdin is None:
             raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
         try:
             return protection_mod.loads(_read(path))
-        except OSError as e:
-            raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
+        except OSError as e:  # without an errno, no path given: `_read`'s own words
+            raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}" if e.errno is not None else f"can't read the {what} file: {e}") from e
         except (ValueError, RecursionError) as e:  # ValueError: bad JSON, NaN, bad UTF-8, a number too long
             why = "nested too deeply" if isinstance(e, RecursionError) else str(e)
             raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({why})") from e

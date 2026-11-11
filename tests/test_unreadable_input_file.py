@@ -116,10 +116,27 @@ def test_an_empty_path_is_refused_as_no_path_given(tmp_path, args):
 
 def test_an_empty_path_in_a_command_with_its_own_wording(tmp_path):
     """merge-check words a file it can't read itself (`str(e)`): an empty path
-    is no path given there too. (`charter` and `protection` refuse an empty
-    path before reading.)"""
+    is no path given there too. (`charter` refuses an empty path before
+    reading.)"""
     p = _cli(tmp_path, "merge-check", "--json", "--pr", "")
     assert _merge_check_why(p, "pr") == "Not yet: couldn't read the pull request (--pr): no path was given."
+
+
+@pytest.mark.parametrize("flag, what", [("--rulesets", "rulesets"), ("--repo", "repository's settings")])
+def test_protection_words_an_empty_path_from_reads_own_check(tmp_path, flag, what):
+    """`protection` refuses an empty path in one line naming which file, in
+    `_read`'s words: `_read`'s check is the only one (the architecture's
+    "Reuse, not copies")."""
+    import inspect
+
+    from workflow import cli
+
+    (tmp_path / "rulesets.json").write_text("[]")
+    args = {"--rulesets": "rulesets.json", "--repo": "settings.json", flag: ""}
+    p = _cli(tmp_path, "protection", *[x for k, v in args.items() for x in (k, v)], "--base", "main")
+    assert p.returncode != 0 and p.stdout == ""
+    assert p.stderr == f"workflow protection: can't read the {what} file: no path was given\n", p.stderr
+    assert "not path" not in inspect.getsource(cli.cmd_protection)
 
 
 def test_the_closed_standard_input_check_is_reads_alone():
