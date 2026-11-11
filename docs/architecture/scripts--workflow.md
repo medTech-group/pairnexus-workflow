@@ -1,10 +1,11 @@
 Covers: scripts/workflow/cli.py
 Covers: scripts/workflow/evidence.py
+Covers: scripts/workflow/graph.py
 Covers: scripts/workflow/proc.py
 Covers: scripts/workflow/profile.py
 Covers: scripts/workflow/research.py
 
-Interface: `proc.run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and `proc.output(argv, *, cwd=None, timeout) -> str | None`.
+Interface: `proc.run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and `proc.output(argv, *, cwd=None, timeout) -> str | None`; `graph.parse_id(text) -> Id` (raises `BadId`), `graph.cites(root, base, ids, issues, prs, *, repo, sensitive, note) -> (results, unread)` (raises `GraphError`), each result's `as_dict()` the spec's `--json` object, and `graph.text(results, notes) -> str`.
 
 # scripts/workflow
 
@@ -19,6 +20,9 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `proc.run`: runs one of the kit's own short commands with no shell and no input, in a session of its own, and kills its whole process group whenever the caller stops waiting (a timeout, a Ctrl-C), holding a Ctrl-C that comes while it starts; a Ctrl-C still reaches the caller as `KeyboardInterrupt`. Doctor's `_run`, `workflow status`'s `git` call, the profile's `_git` and the evidence run's tree look (`_git_out` in `evidence.py`) use it.
 - `proc.output`: what a command printed, as UTF-8 with other bytes replaced, when it exited 0; else None.
 - `ascii_link`: in `research.py`, the link in ASCII: the host encoded by UTS 46 non-transitional rules, the userinfo, path, query and fragment percent-encoded as UTF-8. `fetch` sends a link outside ASCII without its userinfo, as a browser does; a link in ASCII as written. `fetch` and `link_problem` both use it, so a link that can be saved is one that can be fetched.
+- `is_fingerprint_start`: in `research.py`, whether a file is a fingerprint file from its name and the start of its text (named `*.fingerprints`, or its first line a `url:` line); `research check` reads a topic's folder with it, and `workflow graph` leaves such files out.
+- `sentences`: in `graph.py`, a text's sentences as spec #682's "What it gives back" ends them (an end mark with any closing quote, bracket, emphasis or backtick before a space or the line's end, except after "ans", "e.g" and "i.e"; a blank line; the end of a heading, a list item or a table row), with each line's pieces mapped to them, so a citation finds its sentence. Answer ids (#745) find theirs with it.
+- `replaces_lines`: in `graph.py`, the lines of a body's own `## Replaces` section, from its heading to the next, never from a fenced block or a `>` quote. `built_by` (#746) reads its ids from these lines.
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Rules
@@ -27,7 +31,10 @@ A small page: only the lines changes have written so far. The rest of the folder
 
 - `profile.py`: every `git` call goes through `_git`, so through `proc.run`, and its timeout is a module-level seam (`GIT_TIMEOUT`, or `CODE_FILES_TIMEOUT` for the tracked files), never a literal at the call, so the Ctrl-C tests can raise it past their wait (#690).
 
+- `graph.py`: the project graph reads the base branch only at `origin/<base>`, fetched first (`small.base_ref`), never the working tree, and writes nothing else; it reads the files that may cite an id through `git grep` at that ref (binary files left out by git), so only the files that may cite an id are read whole. It spends no model tokens. A run whose state can't be read never stops it: its line goes under the list, or to standard error with `--json`.
+
 ## Decisions
 
 - Doctor's process-group kill (#684) moved into `proc.py` rather than being copied, so `workflow status` and the profile's `git` reads share it (#689).
 - A host outside ASCII is encoded only where the standard library can be sure it encodes it as a browser does, and refused as can't fetch otherwise: the kit has no UTS 46 mapping table, and Python's own `idna` codec is IDNA 2003, which turns `faß.de` into `fass.de` (#532, [#560](https://github.com/medTech-group/pairnexus-workflow/pull/560)).
+- `workflow graph cites` is its own module, `graph.py`, so the vendored copy's lock records when a project got it (spec #682, "The command's form"); its `--json` objects carry `built_by` and `changed_by` empty until #746 and #745 fill them, so the form is the spec's from the first ticket (#744).
