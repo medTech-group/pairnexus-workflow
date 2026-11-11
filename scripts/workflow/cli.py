@@ -1219,9 +1219,10 @@ def _graph_items(value, what: str, given: str) -> list[dict]:
 def cmd_graph(a) -> int:
     """`graph cites` (spec #682, #744): each id's citing passages at
     `origin/<base>`, fetched first, and the open issues and pull requests
-    citing it, counts first; `--json` the spec's list of objects. A line about
-    the reading (a fetch that failed, a run whose state can't be read) goes
-    to standard error with `--json`, else under the list. Exits 0, 1 when it
+    citing it, counts first; `--json` the spec's list of objects. A run whose
+    state can't be read is named under the list, or on standard error with
+    `--json`; a fetch of the base branch that failed is said on standard
+    error as it comes, as `small.base_ref`'s other callers do. Exits 0, 1 when it
     can't read what it needs, 2 for an id or inputs it can't take."""
     name = "workflow graph cites"
     try:
@@ -1265,7 +1266,7 @@ def cmd_graph(a) -> int:
     notes: list[str] = []
     try:
         results, unread = graph_mod.cites(root, prof.base_branch, ids, issues, prs, repo=prof.repo,
-                                          sensitive=list(prof.sensitive_patterns), note=notes.append)
+                                          sensitive=list(prof.sensitive_patterns), note=lambda t: print(f"{name}: {t}", file=sys.stderr))
     except graph_mod.GraphError as e:
         print(f"{name}: {e}", file=sys.stderr)
         return 1
