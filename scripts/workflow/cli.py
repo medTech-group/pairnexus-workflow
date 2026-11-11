@@ -1227,6 +1227,9 @@ def cmd_graph(a) -> int:
     except graph_mod.GraphError as e:
         print(f"{name}: {e}", file=sys.stderr)
         return 1
+    except graph_mod.BadId as e:  # a note's path that isn't at origin/<base>
+        print(f"{name}: {e}", file=sys.stderr)
+        return 2
     notes += unread
     if a.json:
         _out([r.as_dict() for r in results])

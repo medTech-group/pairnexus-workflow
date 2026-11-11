@@ -87,7 +87,9 @@ _ADR_ID = re.compile(r"ADR:(\d+)", re.I)
 
 
 def parse_id(text: str) -> Id:
-    """`#n`, `ADR:NNNN` or a note's path (backticks and a leading `./` dropped)."""
+    """`#n`, `ADR:NNNN` or a note's path (backticks and a leading `./` dropped):
+    a file's or folder's path under `docs/research/`, with no empty, `.` or
+    `..` part. `cites` refuses one that isn't at `origin/<base>`."""
     t = (text or "").strip().strip("`").strip()
     if _ANSWER_ID.fullmatch(t):
         raise BadId(f"`{t}`: answer ids (`#n:answer:N`) aren't read yet")
@@ -99,9 +101,11 @@ def parse_id(text: str) -> Id:
         return Id("adr", number=int(m.group(1)))
     while t.startswith("./"):
         t = t[2:]
-    if t and "/" in t.rstrip("/") or t.endswith(".md"):
-        return Id("note", path=t.rstrip("/"))
-    raise BadId(f"`{text}` isn't an id: give `#n`, `ADR:NNNN` or a research note's path")
+    t = t.rstrip("/")
+    parts = t.split("/")
+    if t.startswith(RESEARCH_DIR) and len(parts) > 2 and not {"", ".", ".."} & set(parts):
+        return Id("note", path=t)
+    raise BadId(f"`{text}` isn't an id: give `#n`, `ADR:NNNN` or a research note's path (under {RESEARCH_DIR})")
 
 
 # ---------- citation forms ----------
@@ -519,9 +523,13 @@ def cites(root: Path, base: str, ids: list[Id], issues: list[dict], prs: list[di
     """Each id's passages and open issues, from the issues and pull requests
     as objects (their pages flattened), and the lines naming runs whose state
     can't be read. `note(text)` gets a fetch that failed (the `origin/<base>`
-    already here is read instead). Raises GraphError."""
+    already here is read instead). Raises GraphError, or BadId for a note's
+    path that isn't at `origin/<base>`."""
     try:
         ref = small_mod.base_ref(root, base, note, "the profile's project.base_branch")
+        for id_ in ids:
+            if id_.kind == "note" and _git(root, "cat-file", "-e", f"{ref}:{id_.path}").returncode != 0:
+                raise BadId(f"`{id_.path}` isn't a research note's path: there is no such file or folder at origin/{base}")
         texts = files_citing(root, ref, ids, vendored(root, ref, note))
     except small_mod.CantMeasure as e:  # git couldn't run, or didn't finish
         raise GraphError(str(e)) from None
