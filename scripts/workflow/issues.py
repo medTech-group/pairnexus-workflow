@@ -298,11 +298,14 @@ def closed_by_open_prs(prs: list[dict], repo: str | None = None) -> dict[int, in
     return out
 
 
+def is_spec(issue: dict) -> bool:
+    """The `spec` label, or a "Spec:" title."""
+    return SPEC_LABEL in labels_of(issue) or (issue.get("title") or "").strip().casefold().startswith("spec:")
+
+
 def is_build_ticket(issue: dict) -> bool:
-    """Not a map, not a spec (label or a "Spec:" title), not a parent of sub-issues."""
-    if labels_of(issue) & NOT_BUILD_LABELS:
-        return False
-    if (issue.get("title") or "").strip().casefold().startswith("spec:"):
+    """Not a map, not a spec (`is_spec`), not a parent of sub-issues."""
+    if labels_of(issue) & NOT_BUILD_LABELS or is_spec(issue):
         return False
     subs = issue.get("sub_issues_summary") or {}
     if isinstance(subs, dict) and (subs.get("total") or 0) > 0:

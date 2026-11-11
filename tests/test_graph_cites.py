@@ -4,6 +4,7 @@ local bare repository, with GitHub's issues and pull requests from files or
 through `tests/fake_gh.py`. Only what the command prints, text and `--json`."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -548,3 +549,21 @@ def test_it_uses_the_shared_constants_not_copies_of_them():
         assert copy not in src, copy
     assert graph.LOCK == vendor.LOCK.as_posix() and graph.RUN_LABEL == estimate.RUN_LABEL
     assert graph.NOT_TICKET_LABELS == issues.OWNER_TASK_LABELS | {issues.RESEARCH_LABEL}
+
+
+def test_one_spec_test_shared_by_the_graph_status_and_build_tickets():
+    """`issues.is_spec` is the one spec test (the `spec` label or a "Spec:"
+    title), listed on its page; the graph's kind, `status` and
+    `is_build_ticket` use it, with no copy of the title test."""
+    import inspect
+
+    from workflow import graph, issues, status
+
+    assert issues.is_spec({"labels": [{"name": "Spec"}]}) and issues.is_spec({"title": "  spec: booking"})
+    assert not issues.is_spec({"title": "A spec for booking", "labels": ["wayfinder:map"]})
+    for module in (graph, status):
+        assert '"spec:"' not in inspect.getsource(module), module
+    assert inspect.getsource(issues).count('startswith("spec:")') == 1
+    assert "is_spec(" in inspect.getsource(issues.is_build_ticket) and "is_spec(" in inspect.getsource(graph.kind_of)
+    page = (Path(__file__).resolve().parents[1] / "docs/architecture/scripts--workflow.md").read_text()
+    assert "Covers: scripts/workflow/issues.py\n" in page and "\n- `is_spec`: in `issues.py`" in page

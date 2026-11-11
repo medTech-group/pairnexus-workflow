@@ -444,7 +444,7 @@ def kind_of(item: dict, is_pr: bool, by_hand: set[int]) -> str:
     if is_pr:
         return "pull_request"
     labels = issues_mod.labels_of(item)
-    if issues_mod.SPEC_LABEL in labels or (item.get("title") or "").strip().casefold().startswith("spec:"):
+    if issues_mod.is_spec(item):
         return "spec"
     if any(l.startswith("wayfinder:") and l != "wayfinder:map" for l in labels):
         return "decision"

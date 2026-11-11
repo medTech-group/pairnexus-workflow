@@ -1,6 +1,7 @@
 Covers: scripts/workflow/cli.py
 Covers: scripts/workflow/evidence.py
 Covers: scripts/workflow/graph.py
+Covers: scripts/workflow/issues.py
 Covers: scripts/workflow/proc.py
 Covers: scripts/workflow/profile.py
 Covers: scripts/workflow/research.py
@@ -22,6 +23,7 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `ascii_link`: in `research.py`, the link in ASCII: the host encoded by UTS 46 non-transitional rules, the userinfo, path, query and fragment percent-encoded as UTF-8. `fetch` sends a link outside ASCII without its userinfo, as a browser does; a link in ASCII as written. `fetch` and `link_problem` both use it, so a link that can be saved is one that can be fetched.
 - `is_fingerprint_start`: in `research.py`, whether a file is a fingerprint file from its name and the start of its text (named `*.fingerprints`, or its first line a `url:` line); `research check` reads a topic's folder with it, and `workflow graph` leaves such files out.
 - `sentences`: in `graph.py`, a text's sentences as spec #682's "What it gives back" ends them (an end mark with any closing quote, bracket, emphasis or backtick before a space or the line's end, except after "ans", "e.g" and "i.e"; a blank line; the end of a heading, a list item or a table row), with each line's pieces mapped to them, so a citation finds its sentence. Answer ids (#745) find theirs with it.
+- `is_spec`: in `issues.py`, whether an issue is a spec: the `spec` label, or a "Spec:" title. `is_build_ticket`, `workflow status` and `workflow graph`'s `kind` use it.
 - `replaces_lines`: in `graph.py`, the lines of a body's own `## Replaces` section, from its heading to the next, never from a fenced block or a `>` quote. `built_by` (#746) reads its ids from these lines.
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
