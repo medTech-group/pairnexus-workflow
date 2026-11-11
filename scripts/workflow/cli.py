@@ -24,6 +24,7 @@
     workflow briefing verify --file F
     workflow index reads --base REF [--paths P ...] [--json]      (the architecture overview, then the pages a change's files, and the paths given, read; changes nothing)
     workflow index pages [--json]      (every architecture page: its file, Covers: globs, interface and helpers)
+    workflow graph cites ID... --issues F --prs F | --fetch [--json]      (what rests on a decision: the passages at origin/<base> and the open issues citing #n or ADR:NNNN; writes nothing but the base branch's fetch)
     workflow research fingerprint URL --page F | --fetch [--saved F --fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the two files given, both or neither)
     workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
     workflow research notes [--dir DIR] [--json]      (the research notes marked current)
@@ -75,6 +76,7 @@ from . import fetch as fetch_mod
 from . import findings as findings_mod
 from . import _old_python, fallback
 from . import gate as gate_mod
+from . import graph as graph_mod
 from . import guard as guard_mod
 from . import handoff as handoff_mod
 from . import issues as issues_mod
@@ -1181,6 +1183,58 @@ def cmd_preview(a) -> int:
         print(f"workflow preview: couldn't read --{e.name}: {e}", file=sys.stderr)
         return 1
     _out(got.as_dict() if a.json else previews_mod.text(got, sha))
+    return 0
+
+
+def cmd_graph(a) -> int:
+    """`graph cites` (spec #682, #744): each id's citing passages at
+    `origin/<base>`, fetched first, and the open issues and pull requests
+    citing it, counts first; `--json` the spec's list of objects. A run whose
+    state can't be read is named under the list, or on standard error with
+    `--json`; a fetch of the base branch that failed is said on standard
+    error as it comes, as `small.base_ref`'s other callers do. Exits 0, 1 when it
+    can't read what it needs, 2 for an id or inputs it can't take."""
+    name = "workflow graph cites"
+    try:
+        ids = list(dict.fromkeys(graph_mod.parse_id(i) for i in a.ids))
+    except graph_mod.BadId as e:
+        print(f"{name}: {e}", file=sys.stderr)
+        return 2
+    if a.fetch and (a.issues or a.prs):
+        print(f"{name}: give --fetch or --issues F and --prs F, not both", file=sys.stderr)
+        return 2
+    if not a.fetch and not (a.issues and a.prs):
+        print(f"{name}: give --issues F and --prs F (the issues and the open pull requests, as JSON from the GitHub API), or --fetch", file=sys.stderr)
+        return 2
+    root = project_root()
+    prof = load(root, required=False)
+    if not prof:
+        print(f"{name}: the kit isn't set up here (no profile), so the base branch isn't known", file=sys.stderr)
+        return 1
+    if a.fetch:
+        try:
+            issues = fetch_mod.api(f"repos/{prof.repo}/issues?state=all&per_page=100", paginate=True)
+            prs = fetch_mod.api(f"repos/{prof.repo}/pulls?state=open&per_page=100", paginate=True)
+        except fetch_mod.GhError as e:
+            print(f"{name}: couldn't fetch the issues and pull requests ({str(e)[:300]}): give --issues F and --prs F instead", file=sys.stderr)
+            return 1
+    else:
+        issues, prs = _json(a.issues), _json(a.prs)
+    issues, prs = _fetch_items(issues), _fetch_items(prs)
+    notes: list[str] = []
+    try:
+        results, unread = graph_mod.cites(root, prof.base_branch, ids, issues, prs, repo=prof.repo,
+                                          sensitive=list(prof.sensitive_patterns), note=lambda t: print(f"{name}: {t}", file=sys.stderr))
+    except graph_mod.GraphError as e:
+        print(f"{name}: {e}", file=sys.stderr)
+        return 1
+    notes += unread
+    if a.json:
+        _out([r.as_dict() for r in results])
+        for line in notes:
+            print(f"{name}: {line}", file=sys.stderr)
+    else:
+        print(graph_mod.text(results, notes))
     return 0
 
 
@@ -2316,6 +2370,16 @@ def main(argv: list[str] | None = None) -> int:
     r = isub.add_parser("pages", help="every page, sorted by path: its file, Covers: globs (or covers nothing yet), interface line (or no interface given) and helpers")
     r.add_argument("--json", action="store_true", help='{"pages": [{"file", "covers": [globs], "interface", "helpers": [{"name", "what"}]}]}')
     r.set_defaults(fn=cmd_index)
+
+    s = sub.add_parser("graph", help="the project graph: what rests on a decision; calls no model, writes nothing but the base branch's fetch")
+    gsub = s.add_subparsers(dest="action", required=True)
+    r = gsub.add_parser("cites", help="each id's citing passages in the base branch's tracked text files at origin/<base>, fetched first, as file:line and sentence grouped by file, and the open issues and pull requests citing it, counts first")
+    r.add_argument("ids", nargs="+", metavar="ID", help="#n or ADR:NNNN (a research note's path, like an answer id, isn't read yet)")
+    r.add_argument("--issues", metavar="F", help="the issues as the GitHub API lists them, state=all (a list, or --paginate --slurp's pages)")
+    r.add_argument("--prs", metavar="F", help="the open pull requests as the GitHub API lists them")
+    r.add_argument("--fetch", action="store_true", help="read the issues and open pull requests with gh api, page by page")
+    r.add_argument("--json", action="store_true", help='[{"decision", "counts": {"passages", "files", "issues", "built_by", "spec_unsure"}, "passages": [{"file", "line", "sentence", "spec_unsure"}], "issues": [{"number", "kind", "claimed", "sentence", "spec_unsure"}], "built_by": [], "changed_by": []}]')
+    r.set_defaults(fn=cmd_graph)
 
     s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; past stakes judgements and a study's estimated size; calls no model, writes only the two files fingerprint is given")
     rsub = s.add_subparsers(dest="action", required=True)

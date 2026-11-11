@@ -179,7 +179,7 @@ def snapshot(
             detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
             st.maps.append(Item(n, title, detail))
             continue
-        is_spec = "spec" in labels or title.strip().casefold().startswith("spec:")
+        is_spec = issues_mod.is_spec(i)
         path = item_path(body)
         # The item's own section, then held over it (#514), unless it already waits on a person (#577).
         if is_spec or (kids and kids[0]):

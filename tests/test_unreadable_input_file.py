@@ -286,7 +286,7 @@ def test_protection_words_a_file_that_isnt_utf8_as_the_note_says(tmp_path, flag,
 # command reads through `_read` (`_json` and `_json_inputs` among its readers),
 # whether it now gives the one line or words the failure itself, as before.
 NOTE = "#736, split out of #687"
-COMMANDS = ("briefing", "comments", "render", "status", "ready", "charter", "state", "protection", "merge-check", "preview", "research")
+COMMANDS = ("briefing", "comments", "render", "status", "ready", "charter", "state", "protection", "merge-check", "preview", "research", "graph")
 ONE_LINE, OWN_WORDS = "one line", "own words"
 # Each place `cli.py` calls a reader, by (function, the `a.action` it is under,
 # reader, its argument): how it words a file it can't read, and the files the
@@ -324,6 +324,8 @@ READS = {
     ("merge-check", "cmd_merge_check", None, "_json_inputs", "a"): (OWN_WORDS, ["merge-check"]),
     ("preview", "cmd_preview", None, "_json_inputs", "a"): (OWN_WORDS, ["preview"]),
     ("research", "_research_records", None, "_json_inputs", "a"): (OWN_WORDS, ["research stakes", "research estimate"]),
+    ("graph cites issues", "cmd_graph", None, "_json", "a.issues"): (ONE_LINE, ["graph cites --issues"]),
+    ("graph cites prs", "cmd_graph", None, "_json", "a.prs"): (ONE_LINE, ["graph cites --prs"]),
 }
 
 
@@ -453,6 +455,8 @@ RUNS = {
     "preview": ("preview", "--sha", "a" * 40, "--checks", "list.json", "--comments", "M"),
     "research stakes": ("research", "stakes", "--comments", "M", "--permissions", "empty.json"),
     "research estimate": ("research", "estimate", "--comments", "list.json", "--permissions", "M"),
+    "graph cites --issues": ("graph", "cites", "#12", "--issues", "M", "--prs", "list.json"),
+    "graph cites --prs": ("graph", "cites", "#12", "--issues", "list.json", "--prs", "M"),
     # `ready --permissions` is read only for a spec it must check: tests/test_ready_spec_note.py words it.
 }
 
