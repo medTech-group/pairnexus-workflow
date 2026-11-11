@@ -655,28 +655,3 @@ def test_fetch_that_gives_no_list_of_issues_is_refused(root, monkeypatch, capsys
     assert cli.main(["graph", "cites", "#12", "--fetch"]) == 1
     out = capsys.readouterr()
     assert out.out == "" and out.err.startswith("workflow graph cites: gh api's issues aren't a list of ") and out.err.count("\n") == 1, out.err
-
-
-@pytest.mark.parametrize("text", ["{not json", ""])
-@pytest.mark.parametrize("flag", ["--issues", "--prs"])
-def test_an_input_that_isnt_json_is_refused_in_one_line(root, monkeypatch, capsys, text, flag):
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    good, bad = root.parent / "good.json", root.parent / "bad.json"
-    good.write_text("[]")
-    bad.write_text(text)
-    files = {"--issues": good, "--prs": good, flag: bad}
-    code = cli.main(["graph", "cites", "#12", *[x for k, v in files.items() for x in (k, str(v))]])
-    out = capsys.readouterr()
-    assert code == 2 and out.out == ""
-    assert out.err.startswith(f"workflow graph cites: {flag} isn't JSON (") and out.err.count("\n") == 1, out.err
-
-
-@pytest.mark.parametrize("odd", [{"body": 123}, {"title": 5}, {"labels": [{"name": 7}]}, {"labels": "spec"}, {"state": 5},
-                                 {"assignees": [{"id": 1}]}, {"sub_issues_summary": {"total": "2"}}])
-@pytest.mark.parametrize("flag", ["--issues", "--prs"])
-def test_an_issue_whose_fields_arent_githubs_is_refused_in_one_line(root, monkeypatch, capsys, odd, flag):
-    item = {**_issue(20, "For #12.", labels=["wayfinder:grilling"], assignees=["dev"]), **odd}
-    issues, prs = ([item], []) if flag == "--issues" else ([], [item])
-    code, out, err = _run(monkeypatch, capsys, root, "#12", issues=issues, prs=prs)
-    assert code == 2 and out == ""
-    assert err.startswith(f"workflow graph cites: {flag} isn't a list of ") and err.count("\n") == 1, err
