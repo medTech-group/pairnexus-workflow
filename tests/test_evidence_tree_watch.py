@@ -12,6 +12,7 @@ beside the run: after the shard holding a given file it carries out the action
 written in `.workflow/act`, once, and logs each shard it runs to `.workflow/ran`."""
 
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -131,6 +132,31 @@ def test_a_change_in_the_repair_window_makes_a_dirty_report(tmp_path, monkeypatc
     assert _headline(out) == evidence.headline(sha, False, dirty=True)
     assert "2 passed, 1 failed" in out  # it finished
     assert _kept(root, sha) == ["unit-000.json"]
+
+
+def test_a_project_in_a_folder_of_its_checkout_watches_the_whole_checkout(tmp_path, monkeypatch, capsys):
+    # The start check (`git status`) covers the whole checkout, and so does the look after each shard.
+    mono = tmp_path / "mono"
+    root = _repo(mono / "proj")
+    shutil.rmtree(root / ".git")
+    (mono / "shared.txt").write_text("s1\n")
+    git(mono, "init", "-q", "-b", "main")
+    git(mono, "config", "user.email", "t@e")
+    git(mono, "config", "user.name", "t")
+    git(mono, "add", ".")
+    git(mono, "commit", "-qm", "x")
+    sha = _sha(root)
+    _act(root, "tests/test_1.txt", "echo s2 > ../shared.txt")
+    assert _evidence(monkeypatch, root) == 0
+    out = capsys.readouterr().out
+    assert _headline(out) == evidence.headline(sha, True, dirty=True)
+    assert "`shared.txt`" in next(l for l in out.splitlines() if "while it ran" in l)
+    assert _kept(root, sha) == ["unit-000.json"]
+    assert _dirty_kept(root, sha) == ["unit-001.json", "unit-002.json"]
+    # The project's own .workflow/ is still left out, named from the checkout's top.
+    (root / ".gitignore").write_text("")
+    (root / "y.txt").write_text("y")
+    assert evidence.tree_state(root).untracked == {"proj/y.txt"}
 
 
 def test_a_suite_that_writes_a_tracked_file_still_finishes_with_a_dirty_report(tmp_path, monkeypatch, capsys):

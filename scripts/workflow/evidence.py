@@ -168,7 +168,7 @@ def _git_out(root: Path, *args: str) -> bytes:
     return p.stdout
 
 
-def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[str]) -> None:
+def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[str], skip: str = "") -> None:
     """Each tracked or staged path under `root`, named with `prefix`: its index
     entries (a path in conflict has one a stage) and its file's `lstat`, times in
     nanoseconds and the change time included, so a write is seen even when it
@@ -176,13 +176,13 @@ def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[st
     aren't ignored. A checked-out submodule (a gitlink) is its HEAD and, the
     same way, its own tracked and untracked paths, so an edit, a commit or a
     new file inside it is seen too; its folder's own `lstat` isn't kept, since
-    files appearing in it change that."""
+    files appearing in it change that. Paths under `skip` are left out."""
     names = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "-z")).split("\0")
-    untracked.update(prefix + n for n in names if n and (prefix or not n.startswith(".workflow/")))
+    untracked.update(prefix + n for n in names if n and not (skip and n.startswith(skip)))
     entries: dict[str, list[str]] = {}
     for entry in os.fsdecode(_git_out(root, "ls-files", "--stage", "-z")).split("\0"):
         info, _, name = entry.partition("\t")
-        if name and (prefix or not name.startswith(".workflow/")):
+        if name and not (skip and name.startswith(skip)):
             entries.setdefault(name, []).append(info)
     for name, info in entries.items():
         path = root / name
@@ -200,14 +200,18 @@ def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[st
 
 
 def tree_state(root: Path) -> TreeState:
-    """The working tree outside .workflow/, as `collect` compares it after each
-    shard (#703): every tracked or staged path, and the untracked files that
-    aren't ignored, whatever the user's git config, inside submodules too
-    (`_tracked`). Read-only git commands (`status`, `diff`, `fetch`) change
-    neither."""
+    """The whole checkout's working tree, as `collect` compares it after each
+    shard (#703), outside the project's .workflow/: every tracked or staged
+    path, and the untracked files that aren't ignored, whatever the user's git
+    config, inside submodules too (`_tracked`). Paths are named from the
+    checkout's top, as `git status --porcelain` names them, even when the
+    project is a folder in it. Read-only git commands (`status`, `diff`,
+    `fetch`) change neither."""
+    top = Path(os.fsdecode(_git_out(root, "rev-parse", "--show-toplevel")).strip())
+    own = (Path(os.path.relpath(root.resolve(), top.resolve())) / ".workflow").as_posix() + "/"
     files: dict[str, tuple] = {}
     untracked: set[str] = set()
-    _tracked(root, "", files, untracked)
+    _tracked(top, "", files, untracked, skip=own)
     return TreeState(files, frozenset(untracked))
 
 
