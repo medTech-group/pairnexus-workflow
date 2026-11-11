@@ -18,9 +18,9 @@ from test_status_local_gaps import _ctrl_c_at_git_call
 from workflow import architecture
 from workflow.guard import matches
 
-# The profile check's `git` calls, in the order doctor makes them. Doctor's
-# own calls log differently (`-c core.quotePath=false ls-files -z`,
-# `rev-parse --verify -q`), so the profile check's are the first match.
+# The profile check's `git` calls. Doctor's own calls log differently
+# (`-c core.quotePath=false ls-files -z`, `rev-parse --verify -q`), so the
+# profile check's are the first match.
 PROFILE_GIT = ["check-ref-format refs/remotes/origin/main", "rev-parse --verify --quiet refs/remotes/origin/main^{commit}",
                "show refs/remotes/origin/main:.claude/workflow/profile.toml", "ls-files -z"]
 # A profile that names code, so the check reads the tracked files too.
