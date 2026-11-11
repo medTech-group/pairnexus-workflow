@@ -105,11 +105,14 @@ class InputUnreadable(OSError):
     """A file given to a command that can't be read (#687): its OSError's errno,
     reason and file name as they were, so a command that catches OSError words
     it as before; `main` refuses any other in one line (`_read_refusal`).
-    Standard input closed has no errno: its text is "standard input (-) is
-    closed", never `[Errno None] ...`."""
+    Standard input closed, or no path given, has no errno: its text is
+    "standard input (-) is closed" or "no path was given", never
+    `[Errno None] ...`."""
 
     def __str__(self) -> str:
-        return super().__str__() if self.errno is not None else "standard input (-) is closed"
+        if self.errno is not None:
+            return super().__str__()
+        return "standard input (-) is closed" if self.filename == "-" else self.strerror
 
 
 class InputNotText(UnicodeDecodeError):
@@ -123,6 +126,8 @@ def _read(path: str) -> str:
     """A file's text, or standard input's for `-`. A file that can't be read
     raises `InputUnreadable`, one that isn't UTF-8 text `InputNotText`."""
     try:
+        if not path:  # `Path("")` is the folder `.`
+            raise InputUnreadable(None, "no path was given", "")
         if path == "-":
             if sys.stdin is None:
                 raise InputUnreadable(None, "it is closed", "-")
@@ -141,7 +146,7 @@ def _read(path: str) -> str:
 def _read_refusal(e: InputUnreadable | InputNotText) -> str:
     """`main`'s one line for a file `_read` couldn't read, naming it."""
     path = e.path if isinstance(e, InputNotText) else e.filename
-    name = "standard input (-)" if path == "-" else f"`{reviews_mod._shown(path, len(str(path)))}`"
+    name = "standard input (-)" if path == "-" else "the file" if not path else f"`{reviews_mod._shown(path, len(str(path)))}`"
     return f"workflow: can't read {name}: " + ("it isn't UTF-8 text" if isinstance(e, InputNotText) else e.strerror)
 
 
@@ -1025,7 +1030,7 @@ def _json_inputs(a, names, raw=()) -> dict:
                 continue
             values = posts_mod.decode_values(text)
             inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
-        except OSError as e:  # without an errno, a closed standard input: its own words
+        except OSError as e:  # without an errno, a closed standard input or no path given: its own words
             inputs[name] = (None, f"can't open {path}: {e.strerror or e}" if e.errno is not None else str(e))
         except posts_mod.CommentsError as e:
             inputs[name] = (None, f"{path} isn't JSON ({e})")

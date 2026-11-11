@@ -100,6 +100,28 @@ def test_standard_input_in_utf8_still_verifies(tmp_path):
     assert p.stdout.decode().strip().endswith(" intact")
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        pytest.param(("briefing", "verify", "--file", ""), id="briefing verify"),
+        pytest.param(("comments", "--owner", "someone", "--file", ""), id="comments"),
+    ],
+)
+def test_an_empty_path_is_refused_as_no_path_given(tmp_path, args):
+    """An empty path is no file at all (`Path("")` is the folder `.`): it is
+    refused before anything is read."""
+    line = _one_refusal(_cli(tmp_path, *args))
+    assert line == "workflow: can't read the file: no path was given"
+
+
+def test_an_empty_path_in_a_command_with_its_own_wording(tmp_path):
+    """merge-check words a file it can't read itself (`str(e)`): an empty path
+    is no path given there too. (`charter` and `protection` refuse an empty
+    path before reading.)"""
+    p = _cli(tmp_path, "merge-check", "--json", "--pr", "")
+    assert _merge_check_why(p, "pr") == "Not yet: couldn't read the pull request (--pr): no path was given."
+
+
 def test_the_closed_standard_input_check_is_reads_alone():
     """`_read` checks for a closed standard input, and `_json_inputs` reads
     through it with no copy of that check (the architecture's "Reuse, not
