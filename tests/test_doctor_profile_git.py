@@ -12,9 +12,11 @@ whole process group. It runs on status's Ctrl-C harness
 
 import pytest
 
-from changelog_notes import entry, since_0110
+from changelog_notes import KIT, entry, since_0110
 from test_doctor import _prof
 from test_status_local_gaps import _ctrl_c_at_git_call
+from workflow import architecture
+from workflow.guard import matches
 
 # The profile check's `git` calls, in the order doctor makes them. Doctor's
 # own calls log differently (`-c core.quotePath=false ls-files -z`,
@@ -51,3 +53,18 @@ def test_the_changelog_notes_the_doctor_level_ctrl_c_test():
     assert "- **For projects updating:**" in note
     # #690's note no longer says the test is still to come.
     assert "Still to come" not in entry("#690")
+
+
+def test_the_changelog_note_helpers_are_listed_in_their_page():
+    """The overview's "Reuse, not copies": `entry` moved into
+    `tests/changelog_notes.py` is listed in a page, the small page named by
+    its folder ("Code no page covers yet"), which covers the file by a literal
+    path (#717)."""
+    file = "tests/changelog_notes.py"
+    covering = [pg for pg in architecture.pages(KIT) if any(matches(file, [g]) for g in pg.covers)]
+    assert [pg.file for pg in covering] == ["docs/architecture/tests.md"], covering
+    page = covering[0]
+    assert file in page.covers, page.covers
+    helpers = dict(page.helpers)
+    assert {"entry", "since_0110"} <= helpers.keys(), page.helpers
+    assert all(helpers[name] for name in ("entry", "since_0110")), page.helpers
