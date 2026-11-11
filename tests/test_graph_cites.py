@@ -415,6 +415,23 @@ def test_a_run_whose_state_cant_be_read_is_named_and_the_command_goes_on(root, m
     assert "run #25: its state can't be read" in err and "run #26" in err
 
 
+def test_a_run_whose_state_names_no_by_hand_issue_it_can_read_is_named(root, monkeypatch, capsys):
+    state = "<!-- workflow-state:begin -->\n```json\n" + json.dumps({"by_hand_issue": "28"}) + "\n```\n<!-- workflow-state:end -->\n"
+    issues = [_issue(25, "Tracking.\n\n" + state, labels=["workflow:run"]), _issue(28, "A by-hand issue for #12.")]
+    code, out, err = _run(monkeypatch, capsys, root, "#12", issues=issues)
+    assert code == 0
+    assert "run #25: its state names no by-hand issue it can read ('28')" in out
+    assert _kinds(_one(monkeypatch, capsys, root, "#12", issues=issues)) == {28: "ticket"}
+
+
+def test_a_lock_that_cant_be_read_leaves_nothing_out_and_says_so(root, monkeypatch, capsys):
+    _push(root, {".claude/workflow/lock.json": "not json", ".claude/skills/x/SKILL.md": "For #12.\n"})
+    code, out, err = _run(monkeypatch, capsys, root, "#12", "--json")
+    assert code == 0
+    assert [p["file"] for p in json.loads(out)[0]["passages"]] == [".claude/skills/x/SKILL.md"]
+    assert "workflow graph cites: .claude/workflow/lock.json at " in err and "can't be read, so the vendored kit isn't left out" in err
+
+
 # ---------- sensitive sentences ----------
 
 
