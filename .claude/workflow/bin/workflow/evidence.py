@@ -3,7 +3,11 @@
 Runs each suite of the profile in shards against a clean checkout of one
 commit, keeping each shard's result and full output on disk under
 .workflow/evidence/<sha>/, so a container restart re-runs only the unfinished
-shards. The report names the command, head SHA, counts, duration and each
+shards. After each shard it looks at the working tree, then HEAD, before
+keeping the shard's result: a moved HEAD stops it, keeping nothing of that
+shard, and a changed tracked file makes the run a dirty one, kept apart from
+the commit's (`collect`, `tree_state`). The report
+names the command, head SHA, counts, duration and each
 suite's output tail, the likely cause of a failure, and compares the count
 with the base branch's (given, or run on a worktree of the base), which also
 catches skipped tests. With `commands.select_suites` and a base ref, only the
@@ -24,8 +28,9 @@ import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
-from . import repair
+from . import proc, repair
 from .posts import AGENT_MARKER
 from .profile import Profile, Suite
 
@@ -58,6 +63,8 @@ _HEADLINE = re.compile(
 # A change under these runs every suite: they can change what the selection runs.
 DECIDES = (".github/workflows/", ".claude/workflow/")
 SELECT_TIMEOUT = 120
+# For each git command of the tree look (`_git_out`): generous, for a big checkout.
+GIT_TIMEOUT = 300
 # What commands.select_suites prints when no suite is needed (printing nothing runs every suite).
 NONE_NEEDED = "none"
 
@@ -141,6 +148,190 @@ def dirty_paths(root: Path) -> list[str]:
     return [l[3:] for l in out.stdout.splitlines() if l[3:] and not l[3:].startswith(".workflow/")]
 
 
+def _paths(names: list[str], code: bool = False) -> str:
+    """The first five of `names`, sorted, then "and N more"; with code, each a code span (`_code`)."""
+    names = sorted(names)
+    shown = [_code(n) if code else n for n in names[:5]]
+    return ", ".join(shown) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+
+
+_C_QUOTED = {"\a": "\\a", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\v": "\\v", "\f": "\\f", "\r": "\\r", '"': '\\"', "\\": "\\\\"}
+
+
+def _git_quoted(name: str) -> str:
+    """`name` as git quotes a path by default (`core.quotePath`): unchanged, or
+    in double quotes, C-style, when its bytes hold a control character, a byte
+    of 0x80 or more, a double quote or a backslash, each such byte as `\\ooo`
+    when it has no letter escape."""
+    raw = os.fsencode(name)
+    if not re.search(rb'[\x00-\x1f\x7f-\xff"\\]', raw):
+        return name
+    return '"' + "".join(
+        _C_QUOTED.get(chr(b)) or (f"\\{b:03o}" if b < 0x20 or b >= 0x7F else chr(b)) for b in raw
+    ) + '"'
+
+
+def _code(name: str) -> str:
+    """`name` as a Markdown code span on one line, in ASCII: quoted as git
+    quotes it (`_git_quoted`), and fenced with one backtick more than its
+    longest run of them."""
+    name = _git_quoted(name)
+    fence = "`" * (max((len(r) for r in re.findall("`+", name)), default=0) + 1)
+    pad = " " if name.startswith("`") or name.endswith("`") else ""
+    return f"{fence}{pad}{name}{pad}{fence}"
+
+
+class TreeState(NamedTuple):
+    """What `tree_state` saw: each tracked or staged path's mark, the
+    untracked paths that aren't ignored, and the mark of each folder that
+    isn't ignored (`_tracked`)."""
+
+    files: dict[str, tuple]
+    untracked: frozenset[str]
+    folders: dict[str, tuple]
+
+
+def _git_out(root: Path, *args: str, ok: tuple[int, ...] = (0,)) -> bytes:
+    """What `git <args>` printed in `root`, run by the kit's runner (`proc.run`:
+    nothing left running when the wait ends); an EvidenceError when it couldn't
+    start, didn't finish in GIT_TIMEOUT seconds or exited with a code not in `ok`."""
+    done = proc.run(["git", *args], cwd=root, timeout=GIT_TIMEOUT, stderr=True)
+    what = f"`git {' '.join(args)[:100]}` in {root}"
+    if not done.started:
+        raise EvidenceError(f"{what} couldn't start")
+    if done.timed_out:
+        raise EvidenceError(f"{what} didn't finish in {GIT_TIMEOUT} seconds")
+    if done.code not in ok:
+        raise EvidenceError(f"{what} failed: {done.err.decode(errors='replace').strip()[:200]}")
+    return done.out
+
+
+def _folder_mark(path: Path) -> tuple | None:
+    """A folder's `lstat` as `_tracked` keeps it: a file created or removed in it changes it."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _ignored(root: Path, paths: list[str]) -> set[str]:
+    """Which of `paths`, named from `root`, git ignores there (`git check-ignore`).
+    Each is named as `./<path>`, so one starting with `:` is never read as
+    pathspec magic."""
+    quoted = {_git_quoted("./" + x): x for x in paths}
+    found: set[str] = set()
+    for i in range(0, len(paths), 200):
+        named = ["./" + x for x in paths[i : i + 200]]
+        out = _git_out(root, "-c", "core.quotePath=true", "check-ignore", "--", *named, ok=(0, 1))
+        found |= {quoted[x] for x in out.decode("ascii", errors="replace").split("\n") if x in quoted}
+    return found
+
+
+def _untracked_folders(root: Path, skip: str = "") -> list[str]:
+    """The folders under `root` that hold no tracked path and aren't ignored:
+    those `git ls-files --others --directory` lists (one holding untracked
+    files, an empty one, one holding only ignored files), and each folder
+    beneath them that isn't ignored, with no `.git` folder. Named from `root`,
+    without the trailing `/`; those under `skip` left out."""
+    listed = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "--directory", "-z")).split("\0")
+    level = [x[:-1] for x in listed if x.endswith("/") and not (skip and x.startswith(skip))]
+    found: list[str] = []
+    while level:
+        found += level
+        subs: list[str] = []
+        for rel in level:
+            try:
+                with os.scandir(root / rel) as it:
+                    subs += [f"{rel}/{e.name}" for e in it if e.name != ".git" and e.is_dir(follow_symlinks=False)]
+            except OSError:
+                continue
+        subs = [x for x in subs if not (skip and (x + "/").startswith(skip))]
+        ignored = _ignored(root, subs) if subs else set()
+        level = [x for x in subs if x not in ignored]
+    return found
+
+
+def _tracked(
+    root: Path, prefix: str, files: dict[str, tuple], untracked: set[str], folders: dict[str, tuple], skip: str = ""
+) -> None:
+    """Each tracked or staged path under `root`, named with `prefix`: its index
+    entries (a path in conflict has one a stage) and its file's `lstat`, times in
+    nanoseconds and the change time included, so a write is seen even when it
+    put back the same bytes; and in `untracked`, the untracked files that
+    aren't ignored. A checked-out submodule (a gitlink) is its HEAD and, the
+    same way, its own tracked and untracked paths, so an edit, a commit or a
+    new file inside it is seen too; its folder's own `lstat` isn't kept, since
+    files appearing in it change that. In `folders`, each folder that isn't
+    ignored, named with a trailing `/` (the checkout's top `./`): one holding a
+    tracked or staged path, `root` included, and one holding none (an empty
+    one, one holding only ignored files: `_untracked_folders`); its `lstat`,
+    which a file created or removed in it changes, an ignored one too, even
+    when it's gone again. Paths under `skip` are left out."""
+    names = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "-z")).split("\0")
+    untracked.update(prefix + n for n in names if n and not (skip and n.startswith(skip)))
+    entries: dict[str, list[str]] = {}
+    for entry in os.fsdecode(_git_out(root, "ls-files", "--stage", "-z")).split("\0"):
+        info, _, name = entry.partition("\t")
+        if name and not (skip and name.startswith(skip)):
+            entries.setdefault(name, []).append(info)
+    for name, info in entries.items():
+        path = root / name
+        if any(i.startswith("160000 ") for i in info) and (path / ".git").exists():
+            files[prefix + name] = (tuple(info), "submodule", _git_out(path, "rev-parse", "HEAD").strip())
+            _tracked(path, f"{prefix}{name}/", files, untracked, folders)
+            continue
+        try:
+            st = os.lstat(path)
+            mark: tuple | None = (st.st_mode, st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+        except OSError:
+            mark = None
+        files[prefix + name] = (tuple(info), mark)
+    for rel in {p.as_posix() for name in entries for p in Path(name).parents}:
+        folders[prefix + rel + "/" if rel != "." else prefix or "./"] = _folder_mark(root / rel)
+    for rel in _untracked_folders(root, skip):
+        folders[prefix + rel + "/"] = _folder_mark(root / rel)
+
+
+def tree_state(root: Path) -> TreeState:
+    """The whole checkout's working tree, as `collect` compares it after each
+    shard (#703), outside the project's .workflow/: every tracked or staged
+    path, and the untracked files that aren't ignored, whatever the user's git
+    config, inside submodules too (`_tracked`). Paths are named from the
+    checkout's top, as `git status --porcelain` names them, even when the
+    project is a folder in it. Read-only git commands (`status`, `diff`,
+    `fetch`) change neither."""
+    top = Path(os.fsdecode(_git_out(root, "rev-parse", "--show-toplevel")).strip())
+    own = (Path(os.path.relpath(root.resolve(), top.resolve())) / ".workflow").as_posix() + "/"
+    files: dict[str, tuple] = {}
+    untracked: set[str] = set()
+    folders: dict[str, tuple] = {}
+    _tracked(top, "", files, untracked, folders, skip=own)
+    return TreeState(files, frozenset(untracked), folders)
+
+
+def tree_changes(before: TreeState, after: TreeState, untracked: bool = False) -> list[str]:
+    """The paths whose mark differs between two looks, sorted; with untracked,
+    the untracked files that appeared too, and the folders that aren't ignored
+    a file was created or removed in (`_tracked`), so a file that came and
+    went is seen."""
+    keys = before.files.keys() | after.files.keys()
+    changed = {k for k in keys if before.files.get(k) != after.files.get(k)}
+    if untracked:
+        changed |= after.untracked - before.untracked
+        changed |= {k for k in before.folders.keys() | after.folders.keys() if before.folders.get(k) != after.folders.get(k)}
+    return sorted(changed)
+
+
+@dataclass
+class TreeWatch:
+    """What `collect` saw of the checkout's tree: the paths dirty as its suites
+    started (with --allow-dirty), and those changed while they ran."""
+
+    started: list[str] = field(default_factory=list)
+    changed: list[str] = field(default_factory=list)
+
+
 def checked_head(root: Path, allow_dirty: bool = False) -> str:
     """HEAD, after the same check `collect` makes, for a run with no suite to run."""
     if not allow_dirty:
@@ -154,8 +345,7 @@ def require_clean(root: Path) -> None:
         raise EvidenceError(
             "the working tree has uncommitted changes or untracked files, so a run wouldn't prove the commit "
             "(untracked tests change the result): "
-            + ", ".join(dirty[:5])
-            + (f" and {len(dirty) - 5} more" if len(dirty) > 5 else "")
+            + _paths(dirty)
             + ". Commit, stash or ignore them, or pass --allow-dirty to try a profile."
         )
 
@@ -302,6 +492,7 @@ def collect(
     empty_ok: bool = False,
     notes: list[str] | None = None,
     clean_check: bool = True,
+    watch: TreeWatch | None = None,
 ) -> tuple[str, list[ShardResult]]:
     """Run (or resume) every shard of the suites on HEAD.
 
@@ -312,19 +503,58 @@ def collect(
     suite whose files match nothing counts 0, with a line added to `notes`.
     Without clean_check (the base worktree, fresh from git, where only
     commands.setup has written) the tree isn't checked.
+
+    After each shard, before its result is kept, the run checks the tree, then
+    HEAD (#671, #703). HEAD moved stops it with nothing kept for that shard, so
+    a later run on the commit runs it again. A tracked or staged path changed
+    since the last look (`tree_state`: an edit, even one undone, a removal, a
+    merge left in conflict, inside a submodule too), or with allow_dirty an
+    untracked file that appeared or a file created or removed in a folder
+    that isn't ignored (an ignored file too, even one gone again), makes it
+    a dirty run: the run can't tell its
+    suites' or repair's own writes from a change beside it, so it goes on, and
+    from that shard on keeps its results under <sha>-dirty, never reused, with
+    the paths in `watch.changed` (the report's dirty marker). The repair's
+    window is looked at the same way. Untracked files that appear without
+    allow_dirty are left be (#704). `watch.started` gets the paths dirty as the
+    suites start, with allow_dirty.
     """
+    # The first look comes before the clean check, so nothing slips in between,
+    # and after the store's folder is made, so making it isn't a change beside the run.
+    if clean_check:
+        (store or root / EVIDENCE_DIR).mkdir(parents=True, exist_ok=True)
+    state = tree_state(root) if clean_check else None
     if allow_dirty:
         dirty = dirty_paths(root)
     else:
         if clean_check:
             require_clean(root)
         dirty = []
+    if watch is not None:
+        watch.started[:] = dirty
     sha = head_sha(root)
-    base = (store or root / EVIDENCE_DIR) / (sha + ("-dirty" if dirty else ""))
     if dirty:
-        shutil.rmtree(base, ignore_errors=True)
-        fresh = True
-    base.mkdir(parents=True, exist_ok=True)
+        base, fresh = _dirty_store(store, root, sha), True
+    else:
+        base = (store or root / EVIDENCE_DIR) / sha
+        base.mkdir(parents=True, exist_ok=True)
+    changed: set[str] = set()
+
+    def look() -> None:
+        """Switch to the dirty store, and name what changed, if the tree changed since the last look."""
+        nonlocal state, base, fresh
+        if state is None:
+            return
+        now = tree_state(root)
+        new = tree_changes(state, now, untracked=allow_dirty)
+        state = now
+        if not new:
+            return
+        if not dirty and not changed:
+            base, fresh = _dirty_store(store, root, sha), True  # from here on, kept apart: never the commit's
+        changed.update(new)
+        if watch is not None:
+            watch.changed[:] = sorted(changed)
     results: list[ShardResult] = []
     suites = [s for s in profile.suites if not only or s.name in only]
     if not suites:
@@ -358,14 +588,28 @@ def collect(
             if repair_first and profile.repair and (not repaired or last_failed):
                 repair.run(profile.repair, root)
                 repaired = True
+                look()  # the repair's window, like a shard's: its writes can't be told from a change beside it
             r = run_shard(suite, i, files, root, log=_next_log(base, f"{suite.name}-{i:03d}"), log_root=log_root)
             r.previous_failures = earlier
+            # Checked before the result is kept, the tree first, then HEAD, so an edit
+            # committed between the two can't pass either: a shard either changed is never reused.
+            look()
+            f = base / f.name
+            if head_sha(root) != sha:
+                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
             f.write_text(json.dumps(asdict(r)))
             results.append(r)
             last_failed = not r.ok
-            if head_sha(root) != sha:
-                raise EvidenceError("HEAD moved while the suite ran; start again on the new commit")
     return sha, results
+
+
+def _dirty_store(store: Path | None, root: Path, sha: str) -> Path:
+    """`<sha>-dirty`, emptied: where a run keeps what didn't run on the commit
+    itself, apart from its evidence and never reused."""
+    base = (store or root / EVIDENCE_DIR) / (sha + "-dirty")
+    shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 def resolve_ref(root: Path, ref: str) -> str:
@@ -605,13 +849,16 @@ def report(
     base_problem: str = "",
     base_notes: list[str] | None = None,
     selection: Selection | None = None,
+    changed: list[str] | None = None,
 ) -> tuple[bool, str]:
     """The evidence as Markdown, and whether it passes. `base_problem` (no usable
     base count, e.g. "no usable base count from main: …") doesn't fail it: the
     commit's own result stands, and the report says plainly that the count
     wasn't compared, so a base branch with its own failure doesn't block every
     PR (the conductor opens an infra ticket for it instead). `selection` says
-    which suites the PR's files needed; with none needed, nothing is compared."""
+    which suites the PR's files needed; with none needed, nothing is compared.
+    `changed` (what changed while it ran: `TreeWatch.changed`) makes it a dirty
+    report too."""
     by_suite: dict[str, list[ShardResult]] = {}
     for r in results:
         by_suite.setdefault(r.suite, []).append(r)
@@ -624,6 +871,16 @@ def report(
             f"> **Not a proof of the commit.** Run with --allow-dirty on a working tree with {len(dirty)} "
             f"uncommitted or untracked path{'s' if len(dirty) != 1 else ''} ({', '.join(dirty[:5])}"
             f"{', …' if len(dirty) > 5 else ''}). Use it to try a profile, never for the merge rule.",
+            "",
+        ]
+    if changed:
+        lines += [
+            ("> The working tree also changed while it ran: " if dirty else "> **Not a proof of the commit.** The working tree changed while it ran: ")
+            + _paths(changed, code=True)
+            + f" {'was' if len(changed) == 1 else 'were'} written, removed or restaged (the content may be the same again now), "
+            "so from then on it didn't test the commit alone, and the report never counts for the merge rule. "
+            "If the suites or the `[repair]` commands write tracked files, make them write elsewhere; "
+            "otherwise leave the checkout alone while it runs.",
             "",
         ]
     sel = selection or Selection(None)
@@ -685,7 +942,7 @@ def report(
             lines += ["", f"Full output: `{r.log}`"]
         lines.append("</details>")
     scoped = {r.suite for r in results} != {s.name for s in profile.suites}
-    lines[0] = headline(sha, ok, bool(dirty), scoped=scoped)
+    lines[0] = headline(sha, ok, bool(dirty or changed), scoped=scoped)
     # The session posts this report on its PR: an agent's post, so it carries the marker.
     lines += ["", AGENT_MARKER]
     return ok, "\n".join(lines)

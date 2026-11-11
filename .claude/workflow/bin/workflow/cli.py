@@ -101,8 +101,53 @@ from .profile import PROFILE_PATH, ProfileError, code_rule, load, project_root, 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
 
+class InputUnreadable(OSError):
+    """A file given to a command that can't be read (#687): its OSError's errno,
+    reason and file name as they were, so a command that catches OSError words
+    it as before; `main` refuses any other in one line (`_read_refusal`).
+    Standard input closed, or no path given, has no errno: its text is
+    "standard input (-) is closed" or "no path was given", never
+    `[Errno None] ...`."""
+
+    def __str__(self) -> str:
+        if self.errno is not None:
+            return super().__str__()
+        return "standard input (-) is closed" if self.filename == "-" else self.strerror
+
+
+class InputNotText(UnicodeDecodeError):
+    """A file given to a command that isn't UTF-8 text (#687): its decode error
+    as it was, and the path given, `main`'s one line as `InputUnreadable`'s."""
+
+    path = ""
+
+
 def _read(path: str) -> str:
-    return sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    """A file's text, or standard input's for `-`. A file that can't be read
+    raises `InputUnreadable`, one that isn't UTF-8 text `InputNotText`."""
+    try:
+        if not path:  # `Path("")` is the folder `.`
+            raise InputUnreadable(None, "no path was given", "")
+        if path == "-":
+            if sys.stdin is None:
+                raise InputUnreadable(None, "it is closed", "-")
+            return sys.stdin.buffer.read().decode("utf-8")  # its bytes: Python's own reading lets bad ones through
+        return Path(path).read_text(encoding="utf-8")
+    except InputUnreadable:
+        raise
+    except OSError as e:
+        raise InputUnreadable(e.errno, e.strerror or str(e), path) from e
+    except UnicodeDecodeError as e:
+        err = InputNotText(e.encoding, e.object, e.start, e.end, e.reason)
+        err.path = path
+        raise err from e
+
+
+def _read_refusal(e: InputUnreadable | InputNotText) -> str:
+    """`main`'s one line for a file `_read` couldn't read, naming it."""
+    path = e.path if isinstance(e, InputNotText) else e.filename
+    name = "standard input (-)" if path == "-" else "the file" if not path else f"`{reviews_mod._shown(path, len(str(path)))}`"
+    return f"workflow: can't read {name}: " + ("it isn't UTF-8 text" if isinstance(e, InputNotText) else e.strerror)
 
 
 def _json(path: str):
@@ -289,7 +334,18 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
 
 def cmd_status(a) -> int:
     """Where the project stands, for the guided start (`skills/start`), with
-    doctor's local gaps (#62): its local checks only, so no network call."""
+    doctor's local gaps (#62): its local checks only, so no network call.
+    A Ctrl-C while it runs its checks is a quiet stop, as doctor's (#689):
+    the commands it runs through `proc` have their process group killed
+    first."""
+    try:
+        return _status(a)
+    except KeyboardInterrupt:
+        print("workflow status: stopped", file=sys.stderr)
+        return 130
+
+
+def _status(a) -> int:
     root = project_root()
     prof, error = _read_profile(root)
     issues = prs = None
@@ -305,14 +361,10 @@ def cmd_status(a) -> int:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
         issues, prs = _json(a.issues), _json(a.prs)
     experience = resolve_experience(root, prof.experience if prof else None)
-    try:
-        local = doctor_mod.report(
-            doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
-            doctor_mod.LOCAL_CHECKS,
-        )
-    except KeyboardInterrupt:  # Ctrl-C while `python3` runs: a quiet stop, as doctor's
-        print("workflow status: stopped", file=sys.stderr)
-        return 130
+    local = doctor_mod.report(
+        doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
+        doctor_mod.LOCAL_CHECKS,
+    )
     st = status_mod.snapshot(
         root,
         prof is not None or error is not None,
@@ -404,14 +456,12 @@ def cmd_protection(a) -> int:
     prints; sends nothing and writes nothing."""
 
     def given(path: str, what: str):
-        if not path:
-            raise protection_mod.ProtectionError(f"the {what} file was given no path")
         if path == "-" and sys.stdin is None:
             raise protection_mod.ProtectionError(f"the {what} file is standard input (-), and standard input is closed")
         try:
             return protection_mod.loads(_read(path))
-        except OSError as e:
-            raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}") from e
+        except OSError as e:  # without an errno, no path given: `_read`'s own words
+            raise protection_mod.ProtectionError(f"can't read the {what} file {path}: {e.strerror or e}" if e.errno is not None else f"can't read the {what} file: {e}") from e
         except (ValueError, RecursionError) as e:  # ValueError: bad JSON, NaN, bad UTF-8, a number too long
             why = "nested too deeply" if isinstance(e, RecursionError) else str(e)
             raise protection_mod.ProtectionError(f"the {what} file {path} isn't JSON ({why})") from e
@@ -972,16 +1022,14 @@ def _json_inputs(a, names, raw=()) -> dict:
                 continue
             stdin_for = name
         try:
-            if path == "-" and sys.stdin is None:
-                raise ValueError("standard input (-) is closed")
             text = _read(path).removeprefix("\ufeff")
             if name in raw:
                 inputs[name] = (text, None)
                 continue
             values = posts_mod.decode_values(text)
             inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
-        except OSError as e:
-            inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
+        except OSError as e:  # without an errno, a closed standard input or no path given: its own words
+            inputs[name] = (None, f"can't open {path}: {e.strerror or e}" if e.errno is not None else str(e))
         except posts_mod.CommentsError as e:
             inputs[name] = (None, f"{path} isn't JSON ({e})")
         except UnicodeDecodeError:
@@ -1686,6 +1734,7 @@ def cmd_evidence(a) -> int:
     # A bad ref fails before anything runs.
     base_sha = evidence_mod.resolve_ref(root, a.base_ref) if a.base_ref else None
     dirty = evidence_mod.dirty_paths(root) if a.allow_dirty else []
+    watch = evidence_mod.TreeWatch()  # the tree as the suites start, and what changed while they ran (#703)
     selection = evidence_mod.Selection(None)
     if base_sha and not a.suite and not a.all:
         selection = evidence_mod.select(prof, root, a.base_ref, base_sha)
@@ -1693,7 +1742,8 @@ def cmd_evidence(a) -> int:
     if only == []:  # no suite needed: nothing runs here or on the base
         sha, results = evidence_mod.checked_head(root, a.allow_dirty), []
     else:
-        sha, results = evidence_mod.collect(prof, root, only=only, fresh=a.fresh, allow_dirty=a.allow_dirty)
+        sha, results = evidence_mod.collect(prof, root, only=only, fresh=a.fresh, allow_dirty=a.allow_dirty, watch=watch)
+        dirty = watch.started
     base_count, label, problem, notes = a.base_count, "", "", []
     if a.base_ref and only != []:
         b = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=only, fresh=a.fresh, sha=base_sha)
@@ -1703,7 +1753,7 @@ def cmd_evidence(a) -> int:
             problem = f"no usable base count from {a.base_ref}: {b.problem}"
     ok, md = evidence_mod.report(
         sha, prof, results, base_count, dirty=dirty, base_label=label, base_problem=problem, base_notes=notes,
-        selection=selection,
+        selection=selection, changed=watch.changed,
     )
     print(md)
     return 0 if ok else 1
@@ -2399,6 +2449,9 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state join: give --fetch or --issues and --permissions, not both")
     try:
         return a.fn(a)
+    except (InputUnreadable, InputNotText) as e:
+        print(_read_refusal(e), file=sys.stderr)
+        return 1
     except (ProfileError, state_mod.StateError, render_mod.RenderError, evidence_mod.EvidenceError, vendor_mod.VendorError) as e:
         print(f"workflow: {e}", file=sys.stderr)
         return 1
