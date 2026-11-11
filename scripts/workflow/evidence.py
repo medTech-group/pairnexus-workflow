@@ -158,6 +158,19 @@ def _paths(names: list[str], code: bool = False) -> str:
 _C_QUOTED = {"\a": "\\a", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\v": "\\v", "\f": "\\f", "\r": "\\r", '"': '\\"', "\\": "\\\\"}
 
 
+def _git_quoted(name: str) -> str:
+    """`name` as git quotes a path by default (`core.quotePath`): unchanged, or
+    in double quotes, C-style, when its bytes hold a control character, a byte
+    of 0x80 or more, a double quote or a backslash, each such byte as `\\ooo`
+    when it has no letter escape."""
+    raw = os.fsencode(name)
+    if not re.search(rb'[\x00-\x1f\x7f-\xff"\\]', raw):
+        return name
+    return '"' + "".join(
+        _C_QUOTED.get(chr(b)) or (f"\\{b:03o}" if b < 0x20 or b >= 0x7F else chr(b)) for b in raw
+    ) + '"'
+
+
 def _code(name: str) -> str:
     """`name` as a Markdown code span on one line: quoted as git quotes it
     (C-style) when it holds a control character, a double quote or a
@@ -171,27 +184,70 @@ def _code(name: str) -> str:
 
 class TreeState(NamedTuple):
     """What `tree_state` saw: each tracked or staged path's mark, the
-    untracked paths that aren't ignored, and the mark of each folder holding a
-    tracked path."""
+    untracked paths that aren't ignored, and the mark of each folder that
+    isn't ignored (`_tracked`)."""
 
     files: dict[str, tuple]
     untracked: frozenset[str]
     folders: dict[str, tuple]
 
 
-def _git_out(root: Path, *args: str) -> bytes:
+def _git_out(root: Path, *args: str, ok: tuple[int, ...] = (0,)) -> bytes:
     """What `git <args>` printed in `root`, run by the kit's runner (`proc.run`:
     nothing left running when the wait ends); an EvidenceError when it couldn't
-    start, didn't finish in GIT_TIMEOUT seconds or failed."""
+    start, didn't finish in GIT_TIMEOUT seconds or exited with a code not in `ok`."""
     done = proc.run(["git", *args], cwd=root, timeout=GIT_TIMEOUT, stderr=True)
-    what = f"`git {' '.join(args)}` in {root}"
+    what = f"`git {' '.join(args)[:100]}` in {root}"
     if not done.started:
         raise EvidenceError(f"{what} couldn't start")
     if done.timed_out:
         raise EvidenceError(f"{what} didn't finish in {GIT_TIMEOUT} seconds")
-    if done.code:
+    if done.code not in ok:
         raise EvidenceError(f"{what} failed: {done.err.decode(errors='replace').strip()[:200]}")
     return done.out
+
+
+def _folder_mark(path: Path) -> tuple | None:
+    """A folder's `lstat` as `_tracked` keeps it: a file created or removed in it changes it."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _ignored(root: Path, paths: list[str]) -> set[str]:
+    """Which of `paths`, named from `root`, git ignores there (`git check-ignore`)."""
+    quoted = {_git_quoted(x): x for x in paths}
+    found: set[str] = set()
+    for i in range(0, len(paths), 200):
+        out = _git_out(root, "-c", "core.quotePath=true", "check-ignore", "--", *paths[i : i + 200], ok=(0, 1))
+        found |= {quoted[x] for x in out.decode("ascii", errors="replace").split("\n") if x in quoted}
+    return found
+
+
+def _untracked_folders(root: Path, skip: str = "") -> list[str]:
+    """The folders under `root` that hold no tracked path and aren't ignored:
+    those `git ls-files --others --directory` lists (one holding untracked
+    files, an empty one, one holding only ignored files), and each folder
+    beneath them that isn't ignored, with no `.git` folder. Named from `root`,
+    without the trailing `/`; those under `skip` left out."""
+    listed = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "--directory", "-z")).split("\0")
+    level = [x[:-1] for x in listed if x.endswith("/") and not (skip and x.startswith(skip))]
+    found: list[str] = []
+    while level:
+        found += level
+        subs: list[str] = []
+        for rel in level:
+            try:
+                with os.scandir(root / rel) as it:
+                    subs += [f"{rel}/{e.name}" for e in it if e.name != ".git" and e.is_dir(follow_symlinks=False)]
+            except OSError:
+                continue
+        subs = [x for x in subs if not (skip and (x + "/").startswith(skip))]
+        ignored = _ignored(root, subs) if subs else set()
+        level = [x for x in subs if x not in ignored]
+    return found
 
 
 def _tracked(
@@ -204,11 +260,12 @@ def _tracked(
     aren't ignored. A checked-out submodule (a gitlink) is its HEAD and, the
     same way, its own tracked and untracked paths, so an edit, a commit or a
     new file inside it is seen too; its folder's own `lstat` isn't kept, since
-    files appearing in it change that. In `folders`, each folder holding a
-    tracked or staged path, `root` included, named with a trailing `/` (the
-    checkout's top `./`): its `lstat`, which a file created or removed in it
-    changes, an ignored one too, even when it's gone again. Paths under `skip`
-    are left out."""
+    files appearing in it change that. In `folders`, each folder that isn't
+    ignored, named with a trailing `/` (the checkout's top `./`): one holding a
+    tracked or staged path, `root` included, and one holding none (an empty
+    one, one holding only ignored files: `_untracked_folders`); its `lstat`,
+    which a file created or removed in it changes, an ignored one too, even
+    when it's gone again. Paths under `skip` are left out."""
     names = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "-z")).split("\0")
     untracked.update(prefix + n for n in names if n and not (skip and n.startswith(skip)))
     entries: dict[str, list[str]] = {}
@@ -229,12 +286,9 @@ def _tracked(
             mark = None
         files[prefix + name] = (tuple(info), mark)
     for rel in {p.as_posix() for name in entries for p in Path(name).parents}:
-        try:
-            st = os.lstat(root / rel)
-            mark = (st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
-        except OSError:
-            mark = None
-        folders[prefix + rel + "/" if rel != "." else prefix or "./"] = mark
+        folders[prefix + rel + "/" if rel != "." else prefix or "./"] = _folder_mark(root / rel)
+    for rel in _untracked_folders(root, skip):
+        folders[prefix + rel + "/"] = _folder_mark(root / rel)
 
 
 def tree_state(root: Path) -> TreeState:
@@ -256,8 +310,9 @@ def tree_state(root: Path) -> TreeState:
 
 def tree_changes(before: TreeState, after: TreeState, untracked: bool = False) -> list[str]:
     """The paths whose mark differs between two looks, sorted; with untracked,
-    the untracked files that appeared too, and the folders a file was created
-    or removed in (`_tracked`), so a file that came and went is seen."""
+    the untracked files that appeared too, and the folders that aren't ignored
+    a file was created or removed in (`_tracked`), so a file that came and
+    went is seen."""
     keys = before.files.keys() | after.files.keys()
     changed = {k for k in keys if before.files.get(k) != after.files.get(k)}
     if untracked:
@@ -453,7 +508,7 @@ def collect(
     since the last look (`tree_state`: an edit, even one undone, a removal, a
     merge left in conflict, inside a submodule too), or with allow_dirty an
     untracked file that appeared or a file created or removed in a folder
-    holding a tracked path (an ignored one too, even one gone again), makes it
+    that isn't ignored (an ignored file too, even one gone again), makes it
     a dirty run: the run can't tell its
     suites' or repair's own writes from a change beside it, so it goes on, and
     from that shard on keeps its results under <sha>-dirty, never reused, with

@@ -306,6 +306,50 @@ def test_allow_dirty_on_a_clean_tree_sees_an_untracked_file_that_came_and_went(t
     assert _dirty_kept(root, sha) == ["unit-001.json", "unit-002.json"]
 
 
+FOLDERS_NO_TRACKED_FILE = {
+    "an empty folder": "tests/empty",
+    "a folder beneath an untracked one": "tests/empty/deeper",
+    "a folder holding only ignored files": "logs",
+}
+
+
+@pytest.mark.parametrize("folder", FOLDERS_NO_TRACKED_FILE.values(), ids=FOLDERS_NO_TRACKED_FILE.keys())
+def test_allow_dirty_sees_a_file_that_came_and_went_in_a_folder_holding_no_tracked_file(
+    tmp_path, monkeypatch, capsys, folder
+):
+    root = _repo(tmp_path)
+    (root / ".gitignore").write_text(".workflow/\n*.log\n")
+    git(root, "commit", "-qam", "logs ignored")
+    (root / folder).mkdir(parents=True)
+    (root / "logs/a.log").parent.mkdir(exist_ok=True)
+    (root / "logs/a.log").write_text("ignored\n")
+    sha = _sha(root)
+    assert evidence.dirty_paths(root) == []  # a clean tree
+    _act(root, "tests/test_1.txt", f"echo pass > {folder}/conftest.py && rm {folder}/conftest.py")
+    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
+    out = capsys.readouterr().out
+    assert _headline(out) == evidence.headline(sha, True, dirty=True)
+    assert f"`{folder}/`" in next(l for l in out.splitlines() if "while it ran" in l)
+    assert _kept(root, sha) == ["unit-000.json"]
+    assert _dirty_kept(root, sha) == ["unit-001.json", "unit-002.json"]
+
+
+@pytest.mark.parametrize("cache", ["__pycache__", "cach\u00e9 \\x"], ids=["plain name", "a name git quotes"])
+def test_allow_dirty_leaves_an_ignored_folder_inside_an_untracked_one_be(tmp_path, monkeypatch, capsys, cache):
+    # The other side: what is written in an ignored folder is never watched, even
+    # inside an untracked folder that is.
+    root = _repo(tmp_path)
+    (root / ".gitignore").write_text(".workflow/\n__pycache__/\ncach*/\n")
+    git(root, "commit", "-qam", "caches ignored")
+    (root / "tests/empty" / cache).mkdir(parents=True)
+    sha = _sha(root)
+    d = f"'tests/empty/{cache}'"
+    _act(root, "tests/test_1.txt", f"touch {d}/m.pyc && mkdir {d}/sub && rm {d}/m.pyc")
+    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
+    assert _headline(capsys.readouterr().out) == evidence.headline(sha, True)
+    assert _kept(root, sha) == ["unit-000.json", "unit-001.json", "unit-002.json"]
+
+
 def test_allow_dirty_on_a_clean_tree_with_no_workflow_folder_yet_is_a_clean_report(tmp_path, monkeypatch, capsys):
     # The run's own store, made in the project's folder, isn't a change beside it.
     root = _repo(tmp_path)
