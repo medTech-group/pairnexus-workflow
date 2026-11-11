@@ -103,18 +103,22 @@ from .profile import PROFILE_PATH, ProfileError, code_rule, load, project_root, 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
 
+_CLOSED = "it is closed"  # standard input's reason, closed
+
+
 class InputUnreadable(OSError):
     """A file given to a command that can't be read (#687): its OSError's errno,
     reason and file name as they were, so a command that catches OSError words
     it as before; `main` refuses any other in one line (`_read_refusal`).
     Standard input closed, or no path given, has no errno: its text is
     "standard input (-) is closed" or "no path was given", never
-    `[Errno None] ...`."""
+    `[Errno None] ...`. A `--issues` or `--prs` file `_issues_file` read but
+    can't take (#757) has none either: its text is its reason."""
 
     def __str__(self) -> str:
         if self.errno is not None:
             return super().__str__()
-        return "standard input (-) is closed" if self.filename == "-" else self.strerror
+        return "standard input (-) is closed" if self.filename == "-" and self.strerror == _CLOSED else self.strerror
 
 
 class InputNotText(UnicodeDecodeError):
@@ -132,7 +136,7 @@ def _read(path: str) -> str:
             raise InputUnreadable(None, "no path was given", "")
         if path == "-":
             if sys.stdin is None:
-                raise InputUnreadable(None, "it is closed", "-")
+                raise InputUnreadable(None, _CLOSED, "-")
             return sys.stdin.buffer.read().decode("utf-8")  # its bytes: Python's own reading lets bad ones through
         return Path(path).read_text(encoding="utf-8")
     except InputUnreadable:
@@ -154,6 +158,31 @@ def _read_refusal(e: InputUnreadable | InputNotText) -> str:
 
 def _json(path: str):
     return json.loads(_read(path))
+
+
+def _issues_file(path: str, what: str) -> list[dict]:
+    """A `--issues` or `--prs` file (`what`: "issues" or "pull requests"), as
+    the GitHub API lists them: a list of objects with a number, or
+    `--paginate --slurp`'s pages of them, flattened. A file that isn't JSON,
+    or isn't such a list (GitHub's error object, say), raises
+    `InputUnreadable` with no errno, so `main` refuses it in one line (#757)."""
+    text = _read(path).removeprefix("﻿")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as e:
+        why = "it is empty" if not text.strip() else f"{e.msg} at line {e.lineno}, column {e.colno}"
+        raise InputUnreadable(None, f"it isn't JSON ({why})", path) from None
+    if isinstance(value, list):
+        entries = [x for v in value for x in (v if isinstance(v, list) else [v])]  # a page's, or the list's own
+        if all(isinstance(x, dict) and doctor_mod._number(x) is not None for x in entries):
+            return _fetch_items(value)
+        kind = f"a list holding something other than {what}"
+    elif isinstance(value, dict):
+        message = value.get("message")
+        kind = "a JSON object" + (f', GitHub\'s message "{reviews_mod._shown(message, 80)}"' if isinstance(message, str) else "")
+    else:
+        kind = "a string" if isinstance(value, str) else "true or false" if isinstance(value, bool) else "null" if value is None else "a number"
+    raise InputUnreadable(None, f"it isn't a list of {what} (it is {kind})", path)
 
 
 def _out(obj) -> None:
@@ -361,7 +390,7 @@ def _status(a) -> int:
     elif a.issues or a.prs:
         if not a.issues or not a.prs:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
-        issues, prs = _json(a.issues), _json(a.prs)
+        issues, prs = _issues_file(a.issues, "issues"), _issues_file(a.prs, "pull requests")
     experience = resolve_experience(root, prof.experience if prof else None)
     local = doctor_mod.report(
         doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
