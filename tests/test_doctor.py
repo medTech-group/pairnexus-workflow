@@ -1144,8 +1144,9 @@ def _gone(pid, seconds=5.0):
 
 
 # Runs the CLI's entry point as `python3 <script> <args>` does, with doctor's
-# RUN_TIMEOUT, the profile's GIT_TIMEOUT and status's OWN_FILES_TIMEOUT set
-# first: the seams a Ctrl-C test controls across the process.
+# RUN_TIMEOUT, the profile's GIT_TIMEOUT and CODE_FILES_TIMEOUT (#690) and
+# status's OWN_FILES_TIMEOUT set first: the seams a Ctrl-C test controls
+# across the process.
 _LAUNCH = """\
 import runpy, sys
 from pathlib import Path
@@ -1153,7 +1154,7 @@ script, timeout = sys.argv[1], float(sys.argv[2])
 sys.argv = [script, *sys.argv[3:]]
 sys.path.insert(0, str(Path(script).resolve().parent))
 from workflow import doctor, profile, status
-doctor.RUN_TIMEOUT = profile.GIT_TIMEOUT = status.OWN_FILES_TIMEOUT = timeout
+doctor.RUN_TIMEOUT = profile.GIT_TIMEOUT = profile.CODE_FILES_TIMEOUT = status.OWN_FILES_TIMEOUT = timeout
 runpy.run_path(script, run_name="__main__")
 """
 

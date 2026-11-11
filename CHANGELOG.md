@@ -8,6 +8,13 @@
 - **`build-ticket` §6 step 2:** the "While it runs" bullet says what the run now catches; the session still stops it before changing its checkout.
 - **For projects updating:** a suite or `[repair]` command that rewrites a tracked file (a lockfile, a snapshot) now gets a dirty report that doesn't count for the merge rule: make it write elsewhere, or untrack and git-ignore that file. Tests: `tests/test_evidence_tree_watch.py`.
 
+**A seam for the timeout of the profile check's tracked files** (#690).
+
+- **`workflow doctor`:** the profile check's `git` calls (the base's profile read: `check-ref-format`, `rev-parse`, `show`; and, for a profile that names code, its tracked files: `ls-files -z`) already run through the shared runner since #689, so a Ctrl-C at any of them kills what that `git` started.
+- **The seam:** `_code_warnings`' `ls-files` gave a literal 20 seconds; it is now `profile.CODE_FILES_TIMEOUT`, which the Ctrl-C tests' launcher raises along with the profile's other `git` timeouts.
+- **Still to come:** the doctor-level Ctrl-C test at each of those calls is #717's.
+- **For projects updating:** nothing to do.
+
 **A Ctrl-C during `workflow status`'s own `git` calls stops it quietly, with nothing left running** (#689).
 
 - **`workflow status`:** a Ctrl-C while it ran one of its own `git` calls (the tracked files it counts, and the base's profile it reads for who writes code) gave a `KeyboardInterrupt` traceback (exit -2) rather than `workflow status: stopped` (exit 130), and left whatever that `git` had started running. A Ctrl-C once `workflow status` has started its checks is now the quiet stop, and those `git` calls run as doctor's commands do: in a session of their own, whose whole process group is killed when the wait ends (a timeout or a Ctrl-C).

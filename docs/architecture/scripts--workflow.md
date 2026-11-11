@@ -1,5 +1,6 @@
 Covers: scripts/workflow/evidence.py
 Covers: scripts/workflow/proc.py
+Covers: scripts/workflow/profile.py
 Covers: scripts/workflow/research.py
 
 Interface: `proc.run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and `proc.output(argv, *, cwd=None, timeout) -> str | None`.
@@ -21,6 +22,8 @@ A small page: only the lines changes have written so far. The rest of the folder
 ## Rules
 
 - `evidence.py`: a run keeps a shard's result as the commit's only after checking, once the shard has ended, the working tree and then that HEAD hasn't moved. A moved head stops the run with nothing kept for that shard, so a later run on the commit runs it again (#671). A tracked or staged path changed since the last look (`tree_state`, inside submodules too, the repair's window included), or with `--allow-dirty` an untracked file that appeared or a file created or removed in a folder that isn't ignored (an ignored file too, even one gone again), makes the run a dirty one: it goes on, keeps that shard and every later one under `<sha>-dirty`, and its report carries the dirty marker. Untracked files that appear without `--allow-dirty` are left be (#704). The base branch's worktree, fresh from git, isn't checked at all (#703).
+
+- `profile.py`: every `git` call goes through `_git`, so through `proc.run`, and its timeout is a module-level seam (`GIT_TIMEOUT`, or `CODE_FILES_TIMEOUT` for the tracked files), never a literal at the call, so the Ctrl-C tests can raise it past their wait (#690).
 
 ## Decisions
 
