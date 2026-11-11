@@ -270,6 +270,17 @@ def test_a_command_with_its_own_wording_keeps_it(tmp_path):
     assert p.stderr.strip() == "workflow protection: can't read the rulesets file missing.json: No such file or directory", p.stderr
 
 
+@pytest.mark.parametrize("flag, what", [("--rulesets", "rulesets"), ("--repo", "repository's settings")])
+def test_protection_words_a_file_that_isnt_utf8_as_the_note_says(tmp_path, flag, what):
+    (tmp_path / "rulesets.json").write_text("[]")
+    (tmp_path / "bad.bin").write_bytes(b"\xff\xfe\x00")
+    args = {"--rulesets": "rulesets.json", "--repo": "settings.json", flag: "bad.bin"}
+    p = _cli(tmp_path, "protection", *[x for k, v in args.items() for x in (k, v)], "--base", "main")
+    assert p.returncode != 0 and p.stdout == ""
+    assert p.stderr == f"workflow protection: the {what} file bad.bin isn't JSON ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)\n", p.stderr
+    assert "or `` workflow protection: the <what> file <path> isn't JSON (<the decode error>) `` for one that isn't UTF-8 text" in entry(NOTE)
+
+
 
 # The changelog note (#736, split out of #687): it names, for each file a
 # command reads through `_read` (`_json` and `_json_inputs` among its readers),
