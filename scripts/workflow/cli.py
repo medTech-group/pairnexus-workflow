@@ -24,7 +24,7 @@
     workflow briefing verify --file F
     workflow index reads --base REF [--paths P ...] [--json]      (the architecture overview, then the pages a change's files, and the paths given, read; changes nothing)
     workflow index pages [--json]      (every architecture page: its file, Covers: globs, interface and helpers)
-    workflow graph cites ID... --issues F --prs F | --fetch [--json]      (what rests on a decision: the passages at origin/<base> and the open issues citing #n, ADR:NNNN or a note's path; writes nothing but the base branch's fetch)
+    workflow graph cites ID... --issues F --prs F | --fetch [--json]      (what rests on a decision: the passages at origin/<base> and the open issues citing #n or ADR:NNNN; writes nothing but the base branch's fetch)
     workflow research fingerprint URL --page F | --fetch [--saved F --fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the two files given, both or neither)
     workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
     workflow research notes [--dir DIR] [--json]      (the research notes marked current)
@@ -1269,9 +1269,6 @@ def cmd_graph(a) -> int:
     except graph_mod.GraphError as e:
         print(f"{name}: {e}", file=sys.stderr)
         return 1
-    except graph_mod.BadId as e:  # a note's path that isn't at origin/<base>
-        print(f"{name}: {e}", file=sys.stderr)
-        return 2
     notes += unread
     if a.json:
         _out([r.as_dict() for r in results])
@@ -2418,7 +2415,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("graph", help="the project graph: what rests on a decision; calls no model, writes nothing but the base branch's fetch")
     gsub = s.add_subparsers(dest="action", required=True)
     r = gsub.add_parser("cites", help="each id's citing passages in the base branch's tracked text files at origin/<base>, fetched first, as file:line and sentence grouped by file, and the open issues and pull requests citing it, counts first")
-    r.add_argument("ids", nargs="+", metavar="ID", help="#n, ADR:NNNN or a research note's path")
+    r.add_argument("ids", nargs="+", metavar="ID", help="#n or ADR:NNNN (a research note's path, like an answer id, isn't read yet)")
     r.add_argument("--issues", metavar="F", help="the issues as the GitHub API lists them, state=all (a list, or --paginate --slurp's pages)")
     r.add_argument("--prs", metavar="F", help="the open pull requests as the GitHub API lists them")
     r.add_argument("--fetch", action="store_true", help="read the issues and open pull requests with gh api, page by page")

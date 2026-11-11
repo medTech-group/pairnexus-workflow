@@ -1,4 +1,4 @@
-"""`workflow graph cites` for an issue, an ADR and a note (#744, spec #682
+"""`workflow graph cites` for an issue and an ADR (#744, spec #682
 seam 1): through `cli.main`, on a scratch git repository whose `origin` is a
 local bare repository, with GitHub's issues and pull requests from files or
 through `tests/fake_gh.py`. Only what the command prints, text and `--json`."""
@@ -129,27 +129,6 @@ def test_an_adr_id_is_compared_by_its_number(root, monkeypatch, capsys):
     assert len(got["passages"]) == 1
 
 
-@pytest.mark.parametrize("text", ["See docs/research/salon-booking/note.md.", "See [the note](../research/salon-booking/note.md).",
-                                  "The study in `docs/research/salon-booking/` says so.", "As docs/research/salon-booking says."])
-def test_a_research_note_is_found_by_its_path(root, monkeypatch, capsys, text):
-    _push(root, {"docs/a.md": text + "\n", "docs/research/salon-booking/note.md": "Status: current\n"})
-    got = _one(monkeypatch, capsys, root, "docs/research/salon-booking/note.md")
-    assert _passages(got) == [("docs/a.md", 1, text)]
-    assert got["decision"] == "docs/research/salon-booking/note.md"
-
-
-
-def test_a_notes_folder_is_a_notes_path_too(root, monkeypatch, capsys):
-    _push(root, {"docs/a.md": "See docs/research/salon-booking/note.md.\n", "docs/research/salon-booking/note.md": "Status: current\n"})
-    got = _one(monkeypatch, capsys, root, "docs/research/salon-booking/")
-    assert got["decision"] == "docs/research/salon-booking" and len(got["passages"]) == 1
-
-def test_a_notes_path_does_not_find_another_note_or_a_file_in_its_folder(root, monkeypatch, capsys):
-    _push(root, {"docs/a.md": "See docs/research/salon-booking-2/note.md and docs/research/salon-booking/sources/x.md.\n",
-                 "docs/research/salon-booking/note.md": "Status: current\n"})
-    assert _one(monkeypatch, capsys, root, "./docs/research/salon-booking/note.md")["passages"] == []
-
-
 def test_several_ids_in_one_run_each_get_their_own_object_in_the_order_asked(root, monkeypatch, capsys):
     _push(root, {"docs/a.md": "For #12.\n\nAs ADR 0003 says.\n"})
     got = _json(monkeypatch, capsys, root, "ADR:0003", "#12", "#99")
@@ -158,15 +137,23 @@ def test_several_ids_in_one_run_each_get_their_own_object_in_the_order_asked(roo
 
 
 @pytest.mark.parametrize("bad", ["#682:answer:3", "12", "ADR:x", "#0", "", "acme/demo#5", "https://github.com/acme/demo/issues/5",
-                                 "docs/adr/0007-thing.md", "a/b", "foo.md", "docs/research/", "docs/research/../adr/note.md",
-                                 "docs/research/salon-boking/note.md"])
+                                 "docs/adr/0007-thing.md", "a/b", "foo.md"])
 def test_an_id_it_cant_read_is_refused(root, monkeypatch, capsys, bad):
-    """A note's path is one under docs/research/ that is at origin/<base>."""
     _push(root, {"docs/research/salon-booking/note.md": "Status: current\n", "docs/a.md": "For #5 and adr/0007-thing.md, a/b, foo.md.\n"})
     code, out, err = _run(monkeypatch, capsys, root, bad)
     assert code == 2
     assert out == ""
     assert "workflow graph cites:" in err
+
+
+@pytest.mark.parametrize("path", ["docs/research/salon-booking/note.md", "./docs/research/salon-booking/", "`docs/research/salon-booking`"])
+def test_a_research_notes_path_is_refused_in_one_line_as_an_id_not_read_yet(root, monkeypatch, capsys, path):
+    """Like an answer id: the form comes later (#762), even for a note that is there."""
+    _push(root, {"docs/research/salon-booking/note.md": "Status: current\n", "docs/a.md": "See docs/research/salon-booking/note.md.\n"})
+    code, out, err = _run(monkeypatch, capsys, root, path)
+    assert code == 2 and out == ""
+    assert err.startswith("workflow graph cites: `") and err.count("\n") == 1, err
+    assert "isn't read as an id yet: that form comes later" in err
 
 
 # ---------- the citing sentence ----------

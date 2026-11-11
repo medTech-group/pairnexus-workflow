@@ -1,8 +1,8 @@
 """`workflow graph cites`: what rests on a decision (spec #682, the project graph).
 
 Built fresh each run from git and the issues' text, with no model and no
-stored graph. For each id asked (`#n`, `ADR:NNNN` or a research note's path)
-it lists, counts first:
+stored graph. For each id asked (`#n` or `ADR:NNNN`) it lists, counts
+first:
 
 - every passage citing it in the base branch's tracked text files, read at
   `origin/<base>` after fetching it, as `file:line` and its sentence, grouped
@@ -11,9 +11,8 @@ it lists, counts first:
   sentence, its `kind` and whether it is `claimed`.
 
 The citation forms are built in: `#n` (and `owner/repo#n`, for this
-repository); "ADR 0001", "ADR-0001" and paths
-under `adr/`, compared by number; a note's path, its folder's path, or either
-from the `research/` folder on (a relative link). Left out: the vendored kit
+repository); "ADR 0001", "ADR-0001" and paths under `adr/`, compared by
+number. Left out: the vendored kit
 (`lock.json`'s `files`, `orphaned` and the `<file>.new` its `conflicts` name),
 research notes' saved copies and fingerprint files (third-party text), a
 style file's colour (`#` and 3, 6 or 8 hex digits), and an issue's citations
@@ -22,7 +21,8 @@ inside its own `## Replaces`. A sentence matching one of the profile's
 
 Answer ids, `built_by`, `changed_by` and the record come with later tickets
 (#745 to #747); their fields are here, empty, so `--json`'s form is the
-spec's from the start. It writes nothing but the fetch of the base branch.
+spec's from the start. A research note's path as an id comes later too
+(#762): it is refused, as an answer id is. It writes nothing but the fetch of the base branch.
 """
 
 from __future__ import annotations
@@ -66,20 +66,14 @@ class BadId(ValueError):
 
 @dataclass(frozen=True)
 class Id:
-    """A decision asked about: `kind` is "issue", "adr" or "note"; `number`
-    for an issue or ADR; `path` for a note (its file, or its folder's path)."""
+    """A decision asked about: `kind` is "issue" or "adr", with its `number`."""
 
     kind: str
     number: int = 0
-    path: str = ""
 
     @property
     def shown(self) -> str:
-        if self.kind == "issue":
-            return f"#{self.number}"
-        if self.kind == "adr":
-            return f"ADR:{self.number:04d}"
-        return self.path
+        return f"#{self.number}" if self.kind == "issue" else f"ADR:{self.number:04d}"
 
 
 _ISSUE_ID = re.compile(r"#([1-9]\d*)")
@@ -88,9 +82,8 @@ _ADR_ID = re.compile(r"ADR:(\d+)", re.I)
 
 
 def parse_id(text: str) -> Id:
-    """`#n`, `ADR:NNNN` or a note's path (backticks and a leading `./` dropped):
-    a file's or folder's path under `docs/research/`, with no empty, `.` or
-    `..` part. `cites` refuses one that isn't at `origin/<base>`."""
+    """`#n` or `ADR:NNNN` (backticks dropped). An answer id and a path (a
+    research note's) are ids not read yet: refused, saying so."""
     t = (text or "").strip().strip("`").strip()
     if _ANSWER_ID.fullmatch(t):
         raise BadId(f"`{t}`: answer ids (`#n:answer:N`) aren't read yet")
@@ -100,49 +93,26 @@ def parse_id(text: str) -> Id:
     m = _ADR_ID.fullmatch(t)
     if m:
         return Id("adr", number=int(m.group(1)))
-    while t.startswith("./"):
-        t = t[2:]
-    t = t.rstrip("/")
-    parts = t.split("/")
-    if t.startswith(RESEARCH_DIR) and len(parts) > 2 and not {"", ".", ".."} & set(parts):
-        return Id("note", path=t)
-    raise BadId(f"`{text}` isn't an id: give `#n`, `ADR:NNNN` or a research note's path (under {RESEARCH_DIR})")
+    if "/" in t or t.casefold().endswith(".md"):
+        raise BadId(f"`{t}`: a path (a research note's) isn't read as an id yet: that form comes later")
+    raise BadId(f"`{text}` isn't an id: give `#n` or `ADR:NNNN`")
 
 
 # ---------- citation forms ----------
-
-
-_PATH_END = r"(?![\w-]|\.\w|/[\w.-])"  # a path's end: not more of a name or a folder
-
-
-def _note_forms(path: str) -> str:
-    """The pattern for a note: its file, its folder (with or without a slash),
-    from its `research/` folder on as a relative link has it."""
-    p = PurePosixPath(path)
-    folder = str(p.parent) if p.name == research_mod.NOTE_FILE else path
-    parts = folder.split("/")
-    tail = "/".join(parts[parts.index("research"):]) if "research" in parts[:-1] else folder
-    exact_file = folder != path or "." not in p.name
-    rest = rf"(?:/{re.escape(research_mod.NOTE_FILE)}|/)?" if exact_file else ""
-    return rf"(?<![\w.\-/])(?:\.{{1,2}}/)*(?:[\w.\-]+/)*?{re.escape(tail)}{rest}{_PATH_END}"
 
 
 def citation_pattern(id_: Id, repo: str | None) -> re.Pattern:
     """Where the id is cited in a line of text."""
     if id_.kind == "issue":
         return re.compile(rf"(?<![\w#/.&-])(?:(?P<repo>[\w.-]+/[\w.-]+))?#{id_.number}(?!\d)\b", re.I)
-    if id_.kind == "adr":
-        return re.compile(r"(?<![\w])ADR[ -]0*(?P<n>\d+)(?!\d)|(?<![\w.-])adr/0*(?P<p>\d+)(?!\d)", re.I)
-    return re.compile(_note_forms(id_.path))
+    return re.compile(r"(?<![\w])ADR[ -]0*(?P<n>\d+)(?!\d)|(?<![\w.-])adr/0*(?P<p>\d+)(?!\d)", re.I)
 
 
 def _cites(m: re.Match, id_: Id, repo: str | None) -> bool:
     if id_.kind == "issue":
         other = m.groupdict().get("repo")
         return not other or issues_mod._same_repo(other, repo)
-    if id_.kind == "adr":
-        return int(m.group("n") or m.group("p")) == id_.number
-    return True
+    return int(m.group("n") or m.group("p")) == id_.number
 
 
 _COLOUR = re.compile(r"[0-9a-f]{3}(?:[0-9a-f]{3}(?:[0-9a-f]{2})?)?(?![\w])", re.I)
@@ -157,13 +127,7 @@ def _is_colour(line: str, m: re.Match) -> bool:
 def _grep_pattern(id_: Id) -> str:
     """A loose extended regex (case-insensitive) that every file citing the id
     matches, to find the files worth reading."""
-    if id_.kind == "issue":
-        return rf"#{id_.number}"
-    if id_.kind == "adr":
-        return r"adr"
-    p = PurePosixPath(id_.path)
-    folder = str(p.parent) if p.name == research_mod.NOTE_FILE else id_.path
-    return re.sub(r"([.\[\]()*+?{}|^$\\])", r"\\\1", folder.split("/")[-1])
+    return rf"#{id_.number}" if id_.kind == "issue" else r"adr"
 
 
 # ---------- sentences ----------
@@ -528,13 +492,9 @@ def cites(root: Path, base: str, ids: list[Id], issues: list[dict], prs: list[di
     """Each id's passages and open issues, from the issues and pull requests
     as objects (their pages flattened), and the lines naming runs whose state
     can't be read. `note(text)` gets a fetch that failed (the `origin/<base>`
-    already here is read instead). Raises GraphError, or BadId for a note's
-    path that isn't at `origin/<base>`."""
+    already here is read instead). Raises GraphError."""
     try:
         ref = small_mod.base_ref(root, base, note, "the profile's project.base_branch")
-        for id_ in ids:
-            if id_.kind == "note" and _git(root, "cat-file", "-e", f"{ref}:{id_.path}").returncode != 0:
-                raise BadId(f"`{id_.path}` isn't a research note's path: there is no such file or folder at origin/{base}")
         texts = files_citing(root, ref, ids, vendored(root, ref, note))
     except small_mod.CantMeasure as e:  # git couldn't run, or didn't finish
         raise GraphError(str(e)) from None
