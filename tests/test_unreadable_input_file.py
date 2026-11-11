@@ -74,6 +74,52 @@ def test_briefing_verify_refuses_closed_standard_input(tmp_path):
     assert line == "workflow: can't read standard input (-): it is closed"
 
 
+def test_the_closed_standard_input_check_is_reads_alone():
+    """`_read` checks for a closed standard input, and `_json_inputs` reads
+    through it with no copy of that check (the architecture's "Reuse, not
+    copies")."""
+    import inspect
+
+    from workflow import cli
+
+    assert "sys.stdin is None" in inspect.getsource(cli._read)
+    assert "sys.stdin" not in inspect.getsource(cli._json_inputs)
+
+
+def _merge_check_why(p, flag):
+    import json
+
+    assert p.returncode == 0, p.stderr
+    reasons = json.loads(p.stdout)["reasons"]
+    return next(r["wording"]["developer"]["message"] for r in reasons if r["id"] == "couldnt_read" and r["input"] == flag)
+
+
+def test_merge_check_words_a_closed_standard_input_as_before(tmp_path):
+    p = _cli(tmp_path, "merge-check", "--json", "--pr", "-", close_stdin=True)
+    assert _merge_check_why(p, "pr") == "Not yet: couldn't read the pull request (--pr): standard input (-) is closed."
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        pytest.param(("charter", "estimate", "-", "--tickets", "3"), id="charter estimate"),
+        pytest.param(("charter", "splice", "--body", "-", "--charter", "{c}"), id="charter splice --body"),
+        pytest.param(("charter", "markdown", "{c}", "--estimate", "-"), id="charter markdown --estimate"),
+    ],
+)
+def test_a_command_with_its_own_wording_says_standard_input_is_closed_plainly(tmp_path, args):
+    """A command that words what `_read` raises itself (`str(e)`) says standard
+    input is closed in plain words, never `[Errno None] ...`."""
+    import json
+
+    c = json.loads(_cli(tmp_path, "charter", "defaults").stdout)
+    c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    (tmp_path / "charter.json").write_text(json.dumps(c))
+    p = _cli(tmp_path, *(a.format(c="charter.json") for a in args), close_stdin=True)
+    assert p.returncode == 1
+    assert p.stderr == f"workflow charter {args[1]}: standard input (-) is closed\n", p.stderr
+
+
 def test_a_path_with_a_line_break_stays_on_one_line(tmp_path):
     _one_refusal(_cli(tmp_path, "briefing", "verify", "--file", "brief\ning.md"), "`brief\\ning.md`")
 

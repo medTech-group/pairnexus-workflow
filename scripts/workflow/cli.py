@@ -104,7 +104,12 @@ KIT_ROOT = Path(__file__).resolve().parents[2]
 class InputUnreadable(OSError):
     """A file given to a command that can't be read (#687): its OSError's errno,
     reason and file name as they were, so a command that catches OSError words
-    it as before; `main` refuses any other in one line (`_read_refusal`)."""
+    it as before; `main` refuses any other in one line (`_read_refusal`).
+    Standard input closed has no errno: its text is "standard input (-) is
+    closed", never `[Errno None] ...`."""
+
+    def __str__(self) -> str:
+        return super().__str__() if self.errno is not None else "standard input (-) is closed"
 
 
 class InputNotText(UnicodeDecodeError):
@@ -1014,16 +1019,14 @@ def _json_inputs(a, names, raw=()) -> dict:
                 continue
             stdin_for = name
         try:
-            if path == "-" and sys.stdin is None:
-                raise ValueError("standard input (-) is closed")
             text = _read(path).removeprefix("\ufeff")
             if name in raw:
                 inputs[name] = (text, None)
                 continue
             values = posts_mod.decode_values(text)
             inputs[name] = (values[0], None) if len(values) == 1 else (values, None) if values else (None, f"{path} is empty")
-        except OSError as e:
-            inputs[name] = (None, f"can't open {path}: {e.strerror or e}")
+        except OSError as e:  # without an errno, a closed standard input: its own words
+            inputs[name] = (None, f"can't open {path}: {e.strerror or e}" if e.errno is not None else str(e))
         except posts_mod.CommentsError as e:
             inputs[name] = (None, f"{path} isn't JSON ({e})")
         except UnicodeDecodeError:
