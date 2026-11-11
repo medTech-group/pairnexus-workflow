@@ -132,14 +132,16 @@ def _section_6_step_2(text: str) -> str:
 def test_build_ticket_stops_the_background_run_before_changing_the_checkout(path):
     step = _section_6_step_2((ROOT / path).read_text())
     rule = step.split("**While it runs,", 1)[1].split("\n   - ", 1)[0]
-    # Before any change to the checkout it stops the run, which sees only its
-    # head moving: an edit or a new file beside it goes unseen.
+    # Before any change to the checkout it stops the run: a moved head stops
+    # it, a changed tracked file makes its report dirty (#703), and a new
+    # untracked file goes unseen.
     for word in ("edit", "merging the base in", "pull", "untracked", "stop it first", "TaskStop"):
         assert word in rule, word
-    # It says what the run does, as the run does it: it catches only a moved
-    # head, and never a changed file (no dirty report, no "could").
-    assert "It catches only a moved head" in rule
-    for word in ("dirty", "could", "might"):
+    # It says what the run does, as the run does it (no "could").
+    assert "It stops when your head moves" in rule
+    assert "a tracked file written, removed or left in conflict beside it" in rule and "a dirty one" in rule
+    assert "a new untracked file goes unseen" in rule
+    for word in ("could", "might"):
         assert word not in rule, word
     assert "It stops if your checkout's head moves" in step and "makes its report a dirty one" not in step
 
@@ -177,8 +179,10 @@ def test_the_dirty_store_is_one_helper_listed_in_its_page(tmp_path):
 def test_the_pages_rule_says_what_each_check_does():
     page = (ROOT / "docs/architecture/scripts--workflow.md").read_text()
     rule = page.split("\n## Rules\n", 1)[1]
-    # True for the code: HEAD is checked before a shard's result is kept, and
-    # the working tree only at the start.
-    for words in ("only after checking", "HEAD", "nothing kept for that shard", "only at its start"):
+    # True for the code: the tree, then HEAD, are checked before a shard's
+    # result is kept; a changed tracked path makes a dirty run (#703), and
+    # untracked files are watched only with --allow-dirty.
+    for words in ("only after checking", "HEAD", "nothing kept for that shard", "`tree_state`", "submodules",
+                  "`<sha>-dirty`", "dirty marker", "Untracked files that appear without `--allow-dirty` are left be"):
         assert words in rule, words
-    assert "untracked" not in rule and "changed tree" not in rule
+    assert "only at its start" not in rule
