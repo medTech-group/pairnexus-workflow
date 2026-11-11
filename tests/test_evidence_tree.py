@@ -132,10 +132,16 @@ def _section_6_step_2(text: str) -> str:
 def test_build_ticket_stops_the_background_run_before_changing_the_checkout(path):
     step = _section_6_step_2((ROOT / path).read_text())
     rule = step.split("**While it runs,", 1)[1].split("\n   - ", 1)[0]
-    # Before any change to the checkout it stops the run, which the run can't
-    # always see itself (an untracked file it might have written).
+    # Before any change to the checkout it stops the run, which sees only its
+    # head moving: an edit or a new file beside it goes unseen.
     for word in ("edit", "merging the base in", "pull", "untracked", "stop it first", "TaskStop"):
         assert word in rule, word
+    # It says what the run does, as the run does it: it catches only a moved
+    # head, and never a changed file (no dirty report, no "could").
+    assert "It catches only a moved head" in rule
+    for word in ("dirty", "could", "might"):
+        assert word not in rule, word
+    assert "It stops if your checkout's head moves" in step and "makes its report a dirty one" not in step
 
 
 # ---------- 4. the page's helpers (the overview's "Reuse, not copies") ----------
