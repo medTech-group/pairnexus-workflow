@@ -648,10 +648,11 @@ def test_both_options_naming_one_file_is_refused(project, fps):
         "not a link",
         "ftp://example.com/a",
         "https:///no-host",
-        "https://exämple.com/ü",
+        "https://exÄmple.com/ü",  # a capital outside ASCII in the host: `fetch` can't be sure to encode it as a browser does (#532)
+        "https://example.com/a\u00a0b",  # a space outside ASCII
         "https://example.com/caf\udce9",  # a lone surrogate, as a byte that isn't UTF-8 in the command line gives
     ],
-    ids=["line-break", "space", "tab", "control", "angle-brackets", "empty", "not-a-link", "ftp", "no-host", "not-ascii", "surrogate"],
+    ids=["line-break", "space", "tab", "control", "angle-brackets", "empty", "not-a-link", "ftp", "no-host", "host-not-encodable", "nbsp", "surrogate"],
 )
 def test_a_link_no_key_source_line_could_name_is_refused_before_anything_is_read_or_written(project, link):
     before = _snapshot(project)
@@ -661,7 +662,7 @@ def test_a_link_no_key_source_line_could_name_is_refused_before_anything_is_read
     assert _snapshot(project) == before
 
 
-@pytest.mark.parametrize("link", ["https://example.com/caf%C3%A9?q=a+b#top", "HTTP://Example.com:8080/a"])
+@pytest.mark.parametrize("link", ["https://example.com/caf%C3%A9?q=a+b#top", "HTTP://Example.com:8080/a", "https://exämple.com/ü"])
 def test_a_link_in_ascii_with_no_space_is_written(project, link):
     p = _write(project, link, "t/u1/s.md", "t/u1/x.fingerprints")
     assert p.returncode == 0, p.stderr
