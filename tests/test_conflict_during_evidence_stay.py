@@ -196,9 +196,10 @@ def test_from_the_conflict_note_the_report_is_still_to_come_whatever_else_is_pos
 def test_the_limit_counts_from_the_conflict_note_and_the_pushes_after_it():
     # its timing: a conflict near the end of the 180 minutes never cuts it off
     h = _hold_conflict()
+    assert "never from the earlier note" not in h
     assert (
-        "Until that next note, the limit counts from the later of the conflict note and the last push to the pull "
-        "request's branch, never from the earlier note"
+        "the limit counts from the latest of the session's latest note (with none, the ticket's `settled_at`), its "
+        "conflict note since then and the last push to the pull request's branch after that conflict note"
     ) in h
 
 
@@ -212,12 +213,8 @@ def test_before_the_session_notices_the_limit_counts_from_the_first_check_in_tha
     # was archived before its conflict note.
     h = _hold_conflict()
     assert "180 minutes plus the charter's `limits.check_in_minutes`" not in h
-    assert (
-        "Each conflict gets its own hold before its conflict note: while no conflict note is up since the session's "
-        "latest note (with no note yet, since the ticket's `started_at`) and your `WF merge-check` on its open pull "
-        f"request gives a `conflict` reason, the limit counts from your line \"{CONDUCTOR_LINE}\" on the tracking "
-        "issue (its `created_at`)."
-    ) in h
+    assert f"and your latest line \"{CONDUCTOR_LINE}\" on the tracking issue (its `created_at`)" in h
+    assert "gives a `conflict` reason, a conflict note up or not, post that line first" in h
     assert (
         "The conflict can come just before the limit, and the session's check-in a full interval after it, so a "
         "limit counted from the session's earlier note, or from a line for an earlier conflict, could archive the "
@@ -226,18 +223,13 @@ def test_before_the_session_notices_the_limit_counts_from_the_first_check_in_tha
     # round 2 of #686: the start was stated twice, and "a grace" was round 1's word
     assert "the later of the session's latest note and the first of your check-ins" not in h
     assert "a grace from the earlier note" not in h
+    # round 3 of #686 (Standards): "hold" is the conductor's name for another step
+    assert "its own hold" not in h
     # the line is the conductor's, never the session's conflict note
     assert CONDUCTOR_LINE != NOTE.replace("#<n>", "#n").replace("#<PR>", "#PR")
 
 
-NEW_LINE = (
-    "At a check-in that gives the `conflict`, post the line unless it is up since the session's latest note and "
-    "each of your check-ins since it gave a `conflict` too: a conflict after the session's next note, or after one "
-    "of your check-ins that gave none, so gets a new line, and the limit counts from the new one."
-)
-
-
-def test_a_second_conflict_after_the_sessions_next_note_gets_its_own_hold():
+def test_a_second_conflict_after_the_sessions_next_note_gets_its_own_limit():
     # round 2 of #686 (Spec): check-ins every 20 minutes; after a first
     # conflict the session merged, pushed and posted its ready note again at
     # T1, "to come" for the new head. A second conflict at T1+179: the
@@ -246,15 +238,18 @@ def test_a_second_conflict_after_the_sessions_next_note_gets_its_own_hold():
     # before its check-in at T1+200 posted its second conflict note.
     h = _hold_conflict()
     assert "Before any conflict note" not in h
-    assert "while no conflict note is up since the session's latest note" in h
-    assert "a conflict after the session's next note" in NEW_LINE
-    assert NEW_LINE in h
+    # a line from before the session's next note is never "up since" it
+    assert (
+        "unless one is up since the later of the session's latest note and its conflict note (with neither, since "
+        "the ticket's `started_at`)"
+    ) in h
     # the other side: from the session's conflict note to its next note, the
-    # conflict note's own hold applies, and the conductor's line plays no part
+    # conflict note and the pushes after it count, and its next note ends that
     assert (
         "until the session's next note after it that the pull request is ready or the owner's to merge, or its "
         "\"#n merged in #PR\": that note is then its latest note, read as above"
     ) in h
+    assert "its conflict note since then" in h
 
 
 def test_a_conflict_that_comes_back_after_a_check_in_that_gave_none_gets_a_new_line():
@@ -265,20 +260,69 @@ def test_a_conflict_that_comes_back_after_a_check_in_that_gave_none_gets_a_new_l
     # T0+5 and the session was archived before its check-in at T0+198.
     h = _hold_conflict()
     assert "unless that line is up since the session's latest note, and count from that line's" not in h
-    assert "or after one of your check-ins that gave none" in NEW_LINE
-    assert NEW_LINE in h
-    # the other side: a conflict that goes on keeps its first line, never one
-    # line per check-in, so its limit still runs out 180 minutes after that line
-    assert "unless it is up since the session's latest note and each of your check-ins since it gave a `conflict` too" in h
+    assert "so gets a new line" not in h
+    assert (
+        "So a conflict that goes on keeps its first line, never a new one at each check-in, and one that comes back "
+        "after a check-in that read the pull request and found no conflict gets a new line."
+    ) in h
+    # the other side: a conflict that goes on keeps its first line, so its
+    # limit still runs out 180 minutes after that line
     hold = _hold()
     assert "Past it, archive the session all the same" in hold
+
+
+def test_a_check_in_that_could_not_tell_keeps_the_conflicts_line():
+    # round 3 of #686 (Spec): the conductor's line L at T0+20, its check-ins
+    # all giving `conflict`, but at T0+150, after another merge moved the base,
+    # `merge-check` gave `mergeable_unknown` (GitHub still recomputing). That
+    # counted as a check-in that "gave none", so T0+170 posted a new line, and
+    # each merge moved the limit again: a dead session never archived.
+    h = _hold_conflict()
+    assert "each of your check-ins since it gave a `conflict` too" not in h
+    assert (
+        "and each of your check-ins since that line gave a `conflict` or couldn't tell (`mergeable_unknown`, or a "
+        "\"couldn't read\" reason whose `input` is `pr`)"
+    ) in h
+    # the other side: a check-in that read the pull request and found no
+    # conflict still ends the line, so a conflict that comes back gets a new one
+    assert (
+        "one that comes back after a check-in that read the pull request and found no conflict gets a new line"
+    ) in h
+    # and a line kept that way still runs out 180 minutes after it
+    assert "Past it, archive the session all the same" in _hold()
+
+
+def test_the_conductors_line_holds_while_a_conflict_note_is_up():
+    # round 3 of #686 (Correctness), check-ins every 20 minutes: ready note R
+    # at T0; a first conflict, the session's conflict note C1 at T0+20, its
+    # push at T0+25; a required check then waits on a runner, so the session
+    # can't post its next note. A second conflict at T0+204: at T0+205.5 C1
+    # was up since R, so the conductor posted no line, and the limit, from the
+    # push at T0+25, archived the session before its check-in at T0+225.
+    h = _hold_conflict()
+    assert "while no conflict note is up since the session's latest note" not in h
+    assert (
+        "at each check-in whose `WF merge-check` on its open pull request gives a `conflict` reason, a conflict note "
+        "up or not, post that line first, unless one is up since the later of the session's latest note and its "
+        "conflict note (with neither, since the ticket's `started_at`)"
+    ) in h
+    assert (
+        "Each conflict gets its own limit: the limit counts from the latest of the session's latest note (with none, "
+        "the ticket's `settled_at`), its conflict note since then and the last push to the pull request's branch "
+        f"after that conflict note, and your latest line \"{CONDUCTOR_LINE}\" on the tracking issue (its "
+        "`created_at`)."
+    ) in h
+    # the other side: the line is posted only for a session whose report is
+    # still to come, and from it the limit is still 180 minutes
+    assert "For a session whose report is still to come, at each check-in" in h
+    assert "**The limit:** 180 minutes since that note was posted (its `created_at`)" in _hold()
 
 
 def test_the_conductors_conflict_line_still_has_a_limit():
     # the other side: with no conflict the limit is the usual one, and from the
     # conductor's line it is still 180 minutes, past which the archive comes
     h = _hold_conflict()
-    assert h.index("Each conflict gets its own hold before its conflict note") < h.index(CONDUCTOR_LINE)
+    assert h.index("Each conflict gets its own limit") < h.index(CONDUCTOR_LINE)
     hold = _hold()
     assert "**The limit:** 180 minutes since that note was posted (its `created_at`)" in hold
     assert "Past it, archive the session all the same" in hold
