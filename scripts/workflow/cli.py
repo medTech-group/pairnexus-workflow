@@ -1686,6 +1686,7 @@ def cmd_evidence(a) -> int:
     # A bad ref fails before anything runs.
     base_sha = evidence_mod.resolve_ref(root, a.base_ref) if a.base_ref else None
     dirty = evidence_mod.dirty_paths(root) if a.allow_dirty else []
+    watch = evidence_mod.TreeWatch()  # the tree as the suites start, and what changed while they ran (#703)
     selection = evidence_mod.Selection(None)
     if base_sha and not a.suite and not a.all:
         selection = evidence_mod.select(prof, root, a.base_ref, base_sha)
@@ -1693,7 +1694,8 @@ def cmd_evidence(a) -> int:
     if only == []:  # no suite needed: nothing runs here or on the base
         sha, results = evidence_mod.checked_head(root, a.allow_dirty), []
     else:
-        sha, results = evidence_mod.collect(prof, root, only=only, fresh=a.fresh, allow_dirty=a.allow_dirty)
+        sha, results = evidence_mod.collect(prof, root, only=only, fresh=a.fresh, allow_dirty=a.allow_dirty, watch=watch)
+        dirty = watch.started
     base_count, label, problem, notes = a.base_count, "", "", []
     if a.base_ref and only != []:
         b = evidence_mod.base_count_from_ref(prof, root, a.base_ref, only=only, fresh=a.fresh, sha=base_sha)
@@ -1703,7 +1705,7 @@ def cmd_evidence(a) -> int:
             problem = f"no usable base count from {a.base_ref}: {b.problem}"
     ok, md = evidence_mod.report(
         sha, prof, results, base_count, dirty=dirty, base_label=label, base_problem=problem, base_notes=notes,
-        selection=selection,
+        selection=selection, changed=watch.changed,
     )
     print(md)
     return 0 if ok else 1

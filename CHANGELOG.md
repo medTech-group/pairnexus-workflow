@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+**A background evidence run watches the working tree after each shard** (#703, split out of #671). A tracked file changed while the suites ran (an edit beside the run, a merge of the base left in conflict, a file a suite or `[repair]` command rewrites) still gave a report naming the commit as tested, and the shard was kept under `<sha>/` for a later run to reuse.
+
+- **`workflow evidence`:** after each shard, and after the `[repair]` commands, it looks at every tracked or staged file (its index entries and file stats, so an edit undone or a rewrite with the same bytes still shows), and inside each checked-out submodule its HEAD and tracked files too. A change makes the run a dirty one: it finishes, keeps that shard and every later one under `<sha>-dirty` (never reused, so a later run on the clean commit runs them again), and its report carries the dirty marker, which `merge-check` never counts, naming the files. With `--allow-dirty`, an untracked file that appears does the same, and the marker follows the run's own look rather than `git status`. Read-only git commands beside the run (`status`, `diff`, `fetch`) change nothing. Untracked files that appear without `--allow-dirty` are still left be (#704).
+- **`build-ticket` §6 step 2:** the "While it runs" bullet says what the run now catches; the session still stops it before changing its checkout.
+- **For projects updating:** a suite or `[repair]` command that rewrites a tracked file (a lockfile, a snapshot) now gets a dirty report that doesn't count for the merge rule: make it write elsewhere, or untrack and git-ignore that file. Tests: `tests/test_evidence_tree_watch.py`.
+
 **A background evidence run never reports a tree it didn't test** (#671, split out of #663). Since #663 a ticket session runs `workflow evidence` in the background while it goes on acting on `merge-check`, and the run checks the working tree only at its start: an edit, or a merge of the base, while shards still ran could end in a report naming the head for a tree that wasn't it. And a shard was saved as passing before the "HEAD moved" check, so a later run on the same commit reused it.
 
-- **`workflow evidence`:** after each shard it checks the head before keeping the shard's result. A moved head stops the run with nothing of that shard kept, so the next run on the commit runs it again. It still checks the working tree only at its start.
+- **`workflow evidence`:** after each shard it checks the head before keeping the shard's result. A moved head stops the run with nothing of that shard kept, so the next run on the commit runs it again. It still checks the working tree only at its start (#703, above, adds the look after each shard).
 - **`build-ticket` §6 step 2:** while the background run goes, the session stops it before changing its checkout (an edit, merging the base in, a pull, a new untracked file), since the run catches only its head moving. Tests: `tests/test_evidence_tree.py`.
 
 **Ctrl-C while doctor starts a command no longer leaves it running, and the Ctrl-C tests no longer fail on a busy machine** (#684).
