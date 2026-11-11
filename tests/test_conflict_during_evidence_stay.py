@@ -128,13 +128,36 @@ def test_the_session_acts_on_the_next_merge_check_until_its_note_is_up_again():
     assert (
         "act on the next `WF merge-check` as step 3 says, at each check-in, ending each turn `waiting`, until it "
         "gives the answer that left the pull request with the owner, or it has merged: post that note again on the "
-        "tracking issue, with the line naming the run's head now, and stay as above."
+        "tracking issue."
     ) in c
     assert (
         "Until that note is up, never end `done`: a run that ends first gets its report, or its \"no report\" line, "
         "posted as above, and you go on."
     ) in c
     assert "Stopping at `needs-human` (§5) ends it as usual." in c
+
+
+def test_the_note_posted_again_carries_the_to_come_line_only_while_the_run_is_going():
+    # round 1 of #686: the run on the new head ended and its report was posted
+    # before the note went up again; a note that still said "to come" made the
+    # conductor, which counts only a report posted after that note, keep the
+    # finished session to its limit and say the report was never posted
+    c = _conflict()
+    assert "with the line naming the run's head now, and stay as above" not in c
+    assert (
+        "While the run is still going, the note carries the line naming the run's head now, and you stay as above."
+    ) in c
+    assert (
+        "Once the run has ended, its report or its \"no report\" line posted, the note carries no such line, since a "
+        "report posted before it never counts for it, and you end `done`."
+    ) in c
+    going = c.index("While the run is still going, the note carries the line")
+    ended = c.index("Once the run has ended, its report or its \"no report\" line posted")
+    assert c.index("post that note again on the tracking issue.") < going < ended
+    # the conductor reads a note without the line as nothing still to come
+    hold = _hold()
+    assert "a comment there, posted after that note" in hold
+    assert "A note without that line leaves nothing to come." in hold
 
 
 def test_the_stay_names_the_conductors_hold_for_the_conflict():
