@@ -164,6 +164,26 @@ def test_merge_check_words_a_closed_standard_input_as_before(tmp_path):
     assert _merge_check_why(p, "pr") == "Not yet: couldn't read the pull request (--pr): standard input (-) is closed."
 
 
+@pytest.mark.parametrize("role", ["ticket", "conductor", "attended"])
+def test_merge_check_words_a_charter_it_cant_read_as_the_note_says(tmp_path, monkeypatch, role):
+    """`merge-check --charter` gives no `couldnt_read` reason: a `charter_refused`
+    note in a ticket or conductor session, and the charter ignored in any other."""
+    import json
+
+    _fixtures(tmp_path)
+    monkeypatch.setenv("WORKFLOW_ROLE", role)
+    p = _cli(tmp_path, "merge-check", "--json", "--charter", "missing.json")
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert not [r for r in out["reasons"] if r.get("input") == "charter"], out["reasons"]
+    notes = {n["id"]: n["message"] for n in out["notes"]}
+    if role == "attended":
+        assert "charter_refused" not in notes and "charter_ignored" in notes, notes
+    else:
+        assert notes["charter_refused"] == "The charter wasn't used, so no check is waived: couldn't read it: can't open missing.json: No such file or directory.", notes
+    assert "`merge-check` (a `couldnt_read` reason; for `--charter`, a `charter_refused` note in a ticket or conductor session, the charter ignored in any other)" in entry(NOTE)
+
+
 @pytest.mark.parametrize(
     "args",
     [
