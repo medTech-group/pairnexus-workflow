@@ -949,7 +949,7 @@ def test_standard_input_twice_or_closed_is_couldnt_read(project, capsys, monkeyp
         else:
             (d / f"{name}.json").write_text(json.dumps(data[name]))
             args += [f"--{name}", str(d / f"{name}.json")]
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(data["pr"])))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(json.dumps(data["pr"]).encode()), encoding="utf-8"))
     assert cli.main(args) == 0
     got = json.loads(capsys.readouterr().out)
     assert [r["input"] for r in got["reasons"] if r["id"] == "couldnt_read"] == ["files"]

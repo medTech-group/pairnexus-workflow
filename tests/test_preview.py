@@ -559,7 +559,7 @@ def test_fetch_refuses_a_number_that_isnt_one(tmp_path, capsys):
 def test_standard_input_is_read_once(tmp_path, capsys, monkeypatch):
     import io
 
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([bot(row())])))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(json.dumps([bot(row())]).encode()), encoding="utf-8"))
     code = cli.main(["preview", "--comments", "-", "--checks", "-", "--sha", HEAD])
     out, err = capsys.readouterr()
     assert code == 1 and "already --comments's" in err
