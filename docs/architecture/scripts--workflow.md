@@ -7,7 +7,7 @@ A small page: only the lines changes have written so far. The rest of the folder
 
 ## Helpers
 
-- `_paths`: in `evidence.py`, names paths in a message: the first five, then "and N more".
+- `_paths`: in `evidence.py`, names paths in a message: the first five, then "and N more"; in a report, each a code span on one line (`_code`: quoted as git quotes it when it holds a control character, a double quote or a backslash, and fenced past its backticks).
 - `_dirty_store`: in `evidence.py`, the emptied `<sha>-dirty` store, where a run keeps what didn't run on the commit itself (a dirty tree with `--allow-dirty`, or a tree that changed mid-run), apart from the commit's evidence and never reused.
 - `tree_state`: in `evidence.py`, a look at the whole checkout's tree, from its top even when the project is a folder in it, outside the project's `.workflow/`: each tracked or staged path's index entries and `lstat`, and the untracked files that aren't ignored (a checked-out submodule's HEAD and its own tracked and untracked paths in its place). `tree_changes` gives the paths that differ between two looks; read-only git commands change neither.
 - `ascii_link`: in `research.py`, the link in ASCII: the host encoded by UTS 46 non-transitional rules, the userinfo, path, query and fragment percent-encoded as UTF-8. `fetch` sends a link outside ASCII without its userinfo, as a browser does; a link in ASCII as written. `fetch` and `link_problem` both use it, so a link that can be saved is one that can be fetched.

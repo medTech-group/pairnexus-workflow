@@ -147,10 +147,24 @@ def dirty_paths(root: Path) -> list[str]:
 
 
 def _paths(names: list[str], code: bool = False) -> str:
-    """The first five of `names`, sorted, then "and N more"; with code, each in backticks."""
+    """The first five of `names`, sorted, then "and N more"; with code, each a code span (`_code`)."""
     names = sorted(names)
-    shown = [f"`{n}`" if code else n for n in names[:5]]
+    shown = [_code(n) if code else n for n in names[:5]]
     return ", ".join(shown) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+
+
+_C_QUOTED = {"\a": "\\a", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\v": "\\v", "\f": "\\f", "\r": "\\r", '"': '\\"', "\\": "\\\\"}
+
+
+def _code(name: str) -> str:
+    """`name` as a Markdown code span on one line: quoted as git quotes it
+    (C-style) when it holds a control character, a double quote or a
+    backslash, and fenced with one backtick more than its longest run of them."""
+    if re.search(r'[\x00-\x1f\x7f"\\]', name):
+        name = '"' + re.sub(r'[\x00-\x1f\x7f"\\]', lambda m: _C_QUOTED.get(m[0], f"\\{ord(m[0]):03o}"), name) + '"'
+    fence = "`" * (max((len(r) for r in re.findall("`+", name)), default=0) + 1)
+    pad = " " if name.startswith("`") or name.endswith("`") else ""
+    return f"{fence}{pad}{name}{pad}{fence}"
 
 
 class TreeState(NamedTuple):

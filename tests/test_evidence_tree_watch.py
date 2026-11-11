@@ -120,6 +120,24 @@ def test_the_report_names_what_changed_and_says_its_content_may_be_the_same(tmp_
     assert "[repair]" in note  # the remedy when the run's own commands write it
 
 
+def test_the_report_note_keeps_each_changed_name_whole(tmp_path, monkeypatch, capsys):
+    # A line break or a backtick in a name never splits the note or breaks its code span.
+    root = _repo(tmp_path)
+    (root / "new\nline.txt").write_text("a\n")
+    (root / "back`tick.txt").write_text("b\n")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "odd names")
+    _act(root, "tests/test_1.txt", "echo x >> 'new\nline.txt' && echo x >> 'back`tick.txt'")
+    _evidence(monkeypatch, root)
+    lines = capsys.readouterr().out.splitlines()
+    i = next(i for i, l in enumerate(lines) if "while it ran" in l)
+    assert lines[i + 1] == ""  # the note is one line
+    assert '`"new\\nline.txt"`' in lines[i]  # quoted as git quotes it
+    assert "``back`tick.txt``" in lines[i]
+    assert "`notes.txt`" not in lines[i]
+    assert evidence._code("`a`") == "`` `a` ``"  # a name that starts or ends with a backtick is padded
+
+
 def test_a_change_in_the_repair_window_makes_a_dirty_report(tmp_path, monkeypatch, capsys):
     # The repair runs again after a failing shard: what it writes then can't be
     # told from a change beside the run.
