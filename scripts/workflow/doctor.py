@@ -48,12 +48,9 @@ import os
 import posixpath
 import re
 import shutil
-import signal
 import statistics
-import subprocess
 import sys
 import textwrap
-import threading
 import time
 import tomllib
 import urllib.parse
@@ -68,6 +65,7 @@ from . import estimate as estimate_mod
 from . import fetch as fetch_mod
 from . import issues as issues_mod
 from . import posts as posts_mod
+from . import proc as proc_mod
 from . import profile as profile_mod
 from . import protection as protection_mod
 from . import updates as updates_mod
@@ -230,53 +228,16 @@ def _run(i: Inputs, argv: list[str], timeout: float | None = None, stderr: bool 
     exe = shutil.which(argv[0], path=i.path)
     if not exe:
         return Ran("missing")
-    # A Ctrl-C while Popen starts the command is held until `p` is set: raised
-    # inside Popen, it would leave the command running with nothing to kill it
-    # (#684). Only the main thread's handler raises KeyboardInterrupt.
-    held: list[int] = []
-    previous = signal.getsignal(signal.SIGINT)
-    hold = callable(previous) and threading.current_thread() is threading.main_thread()
-    if hold:
-        signal.signal(signal.SIGINT, lambda *_: held.append(1))
-    try:
-        p = subprocess.Popen([exe, *argv[1:]], cwd=i.root if i.root.is_dir() else None, env=i.environ,
-                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr else subprocess.DEVNULL,
-                             start_new_session=True)
-    except BaseException as e:
-        if hold:
-            signal.signal(signal.SIGINT, previous)
-        if held:
-            raise KeyboardInterrupt from None
-        if isinstance(e, (OSError, ValueError)):
-            return Ran("failed", err="it couldn't be started")
-        raise
-    timed_out, err = False, b""
-    try:
-        if hold:
-            signal.signal(signal.SIGINT, previous)
-        if held:
-            raise KeyboardInterrupt
-        out, err = p.communicate(timeout=RUN_TIMEOUT if timeout is None else timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-    finally:
-        if p.returncode is None:  # still running: a timeout, or doctor itself interrupted
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except OSError:
-                p.kill()
-            try:
-                p.communicate(timeout=1)  # a detached grandchild may hold the pipe: don't wait on it
-            except subprocess.TimeoutExpired:
-                pass
-            for f in (p.stdout, p.stderr):
-                if f:
-                    f.close()
-    if timed_out:
+    done = proc_mod.run([exe, *argv[1:]], cwd=i.root if i.root.is_dir() else None, env=i.environ,
+                        timeout=RUN_TIMEOUT if timeout is None else timeout, stderr=stderr)
+    if not done.started:
+        return Ran("failed", err="it couldn't be started")
+    if done.timed_out:
         return Ran("timeout")
-    if p.returncode:
+    out, err = done.out, done.err
+    if done.code:
         said = (err or b"").decode("utf-8", "replace").strip().splitlines()
-        return Ran("failed", err="\n".join(said[-3:])[:600] if said else f"exit {p.returncode}", code=p.returncode, said=bool(said))
+        return Ran("failed", err="\n".join(said[-3:])[:600] if said else f"exit {done.code}", code=done.code, said=bool(said))
     try:
         return Ran("ok", out.decode("utf-8", errors))
     except UnicodeDecodeError:

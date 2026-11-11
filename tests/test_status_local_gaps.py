@@ -327,3 +327,84 @@ def test_ctrl_c_stops_status_quietly_with_nothing_left_running(tmp_path):
     code, err = _ctrl_c(CLI, ["status"], root, _env(tmp_path, root, path), marker)
     assert code == 130 and "workflow status: stopped" in err and "Traceback" not in err
     assert _gone(int(marker.read_text()))
+
+
+# #689: a Ctrl-C during status's own `git` calls (its tracked files, then the
+# base's profile read for who writes code) stops it quietly, and kills what
+# that `git` started, as doctor's `_run` does.
+STATUS_GIT = ["ls-files -z", "check-ref-format refs/remotes/origin/main", "rev-parse --verify --quiet refs/remotes/origin/main^{commit}",
+              "show refs/remotes/origin/main:.claude/workflow/profile.toml"]
+
+
+def _git_project(tmp_path):
+    """A checkout with a commit and `origin/main`, so status reads the base's profile."""
+    import shutil
+
+    root, git = _project(tmp_path), shutil.which("git")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    for args in (["init", "-q"], ["add", "-A"], [*ident, "commit", "-qm", "x"], ["update-ref", "refs/remotes/origin/main", "HEAD"]):
+        subprocess.run([git, *args], cwd=root, check=True, capture_output=True)
+    return root
+
+
+def _counting_git(bin_dir, tmp_path, hang_at=None, delay=0):
+    """A `git` on the PATH that logs each call's arguments and runs the real
+    one, except its `hang_at`-th call, which first sleeps `delay` seconds (a
+    busy machine), then starts a `sleep`, writes its pid to the marker and
+    waits. Give the log and the marker."""
+    import shutil
+
+    log, count, marker = tmp_path / "git.log", tmp_path / "git.count", tmp_path / "child.pid"
+    for f in (log, count, marker):
+        f.unlink(missing_ok=True)
+    slow = f'{shutil.which("sleep")} {delay}; ' if delay else ""
+    hang = (f'if [ "$n" = {hang_at} ]; then {slow}{shutil.which("sleep")} 30 & echo $! > {marker}; wait; exit 1; fi\n'
+            if hang_at else "")
+    # Only the fakes are on the PATH: `cat` and the real `git` by their full paths.
+    _fake(bin_dir, "git", f'n=$({shutil.which("cat")} {count} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {count}\n'
+                          f'printf "%s\\n" "$*" >> {log}\n{hang}exec {shutil.which("git")} "$@"')
+    return log, marker
+
+
+def _ctrl_c_at_status_git_call(tmp_path, call, delay=0):
+    root = _git_project(tmp_path)
+    path = _bin(tmp_path, gh=False)
+    log, _ = _counting_git(path, tmp_path)
+    p = _run(tmp_path, root, path=path)
+    assert p.returncode == 0, p.stderr
+    calls = log.read_text().splitlines()
+    assert call in calls, calls
+    # Status's own call comes after doctor's: the last one with these arguments.
+    at = len(calls) - calls[::-1].index(call)
+    _, marker = _counting_git(path, tmp_path, hang_at=at, delay=delay)
+    code, err = _ctrl_c(CLI, ["status"], root, _env(tmp_path, root, path), marker)
+    assert code == 130 and "workflow status: stopped" in err and "Traceback" not in err, err
+    assert _gone(int(marker.read_text())), "what status's git started is still running"
+
+
+@pytest.mark.parametrize("call", STATUS_GIT)
+def test_ctrl_c_during_status_own_git_calls_stops_quietly_with_nothing_left_running(tmp_path, call):
+    _ctrl_c_at_status_git_call(tmp_path, call)
+
+
+# A slow `git` (a busy machine) at each of status's own timeouts: the test's
+# launcher sets them far past its wait, as it does doctor's, so the Ctrl-C
+# still finds the command running.
+@pytest.mark.parametrize("call, delay", [(STATUS_GIT[0], 21), (STATUS_GIT[1], 6)])
+def test_a_slow_status_git_call_is_still_running_when_the_ctrl_c_comes(tmp_path, call, delay):
+    _ctrl_c_at_status_git_call(tmp_path, call, delay)
+
+
+def test_the_changelog_notes_status_own_git_calls_ctrl_c():
+    notes = since_0110()
+    assert "#689" in notes and "workflow status" in notes
+
+
+def test_status_s_quiet_stop_is_never_claimed_for_a_ctrl_c_anywhere():
+    # A Ctrl-C while the CLI is still loading its modules gives a traceback
+    # (#697), so neither the note nor `cmd_status` says "anywhere".
+    notes = since_0110()
+    start = notes.index("(#689).")
+    entry = notes[start:notes.index("\n\n**", start)]
+    assert "- **For projects updating:**" in entry and "Ctrl-C anywhere" not in entry
+    assert "anywhere" not in cli.cmd_status.__doc__
