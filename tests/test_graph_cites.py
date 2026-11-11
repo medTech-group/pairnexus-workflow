@@ -507,6 +507,22 @@ def test_the_text_output_gives_counts_first_then_passages_grouped_by_file_then_i
     ]
 
 
+ODD = "".join(map(chr, (0x1B, 0x07, 0x9B, 0x202E)))
+
+
+def test_terminal_output_shows_each_sentence_printable(root, monkeypatch, capsys):
+    """Terminal output: each sentence shown printable; `--json` keeps it as it is."""
+    _push(root, {"docs/a.md": f"For {ODD}#12 now.\n"})
+    issues = [_issue(20, f"Look {ODD} at #12 now.")]
+    code, out, err = _run(monkeypatch, capsys, root, "#12", issues=issues)
+    assert code == 0
+    assert not set(ODD) & set(out), out
+    assert "    1: For \\u001b\\u0007\\u009b\\u202e#12 now." in out.splitlines()
+    assert "    #20 (ticket): Look \\u001b\\u0007\\u009b\\u202e at #12 now." in out.splitlines()
+    got = _one(monkeypatch, capsys, root, "#12", issues=issues)
+    assert got["passages"][0]["sentence"] == f"For {ODD}#12 now." and got["issues"][0]["sentence"] == f"Look {ODD} at #12 now."
+
+
 # ---------- GitHub's inputs ----------
 
 

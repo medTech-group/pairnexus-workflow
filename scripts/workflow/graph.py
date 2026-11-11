@@ -519,7 +519,8 @@ def cites(root: Path, base: str, ids: list[Id], issues: list[dict], prs: list[di
 
 
 def text(results: list[Result], notes: list[str]) -> str:
-    """Counts first, then the passages grouped by file, then the open issues."""
+    """Counts first, then the passages grouped by file, then the open issues.
+    Each sentence is shown printable, for terminal output (`doctor._printable`)."""
     blocks = []
     for r in results:
         d = r.as_dict()
@@ -531,11 +532,11 @@ def text(results: list[Result], notes: list[str]) -> str:
             if p["file"] != last:
                 lines.append(f"  {p['file']}")
                 last = p["file"]
-            lines.append(f"    {p['line']}: {p['sentence']}")
+            lines.append(f"    {p['line']}: {doctor_mod._printable(p['sentence'])}")
         if d["issues"]:
             lines.append("  open issues:")
             for i in d["issues"]:
-                lines.append(f"    #{i['number']} ({i['kind']}{', claimed' if i['claimed'] else ''}): {i['sentence']}")
+                lines.append(f"    #{i['number']} ({i['kind']}{', claimed' if i['claimed'] else ''}): {doctor_mod._printable(i['sentence'])}")
         blocks.append("\n".join(lines))
     if notes:
         blocks.append("\n".join(notes))
