@@ -9,6 +9,7 @@ a base with 3; another pull request then adds 2 more to the base branch."""
 from pathlib import Path
 
 from conftest import git
+from test_evidence_after_the_merge import _step
 from test_evidence_review import _evidence, _repo
 from test_evidence_tree import _section_6_step_2
 
@@ -82,7 +83,6 @@ def test_build_ticket_restarts_after_the_merge_against_the_base_it_merged_onto()
 
 
 def test_a_stop_the_restart_covers_is_no_reason_for_no_report():
-    s6 = SKILL.read_text().split("## 6. Post the evidence and merge", 1)[1].split("\n## 7.", 1)[0]
-    stay = s6.split("**Then stay**", 1)[1].split("\n6. ", 1)[0]
+    stay = _step(5).split("**Then stay**", 1)[1]
     assert "(it stopped, or couldn't run)" not in stay
     assert "other than by your head moving, which step 2 starts again" in stay
