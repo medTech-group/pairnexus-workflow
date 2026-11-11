@@ -536,7 +536,7 @@ def test_permissions_on_standard_input_already_read_say_so(project, capsys, tmp_
     fake_gh.without_gh(tmp_path, monkeypatch)
     issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record())]), ticket(), ticket(21, section="## Parent\n\n#20")]
     (project / "prs.json").write_text("[]")
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(issues)))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(json.dumps(issues).encode()), encoding="utf-8"))
     assert cli.main(["ready", "--issues", "-", "--prs", str(project / "prs.json"), "--json", "--permissions", "-"]) == 0
     out = json.loads(capsys.readouterr().out)
     notes = {v["number"]: v["notes"] for v in out["ready"]}
@@ -548,7 +548,7 @@ def test_a_bad_permissions_read_gives_the_same_reason_for_every_spec(project, ca
     import io
 
     fake_gh.without_gh(tmp_path, monkeypatch)
-    monkeypatch.setattr("sys.stdin", io.StringIO("{not json"))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO("{not json".encode()), encoding="utf-8"))
     issues = [spec(comments=[comment(spec_record())]), spec(20, comments=[comment(spec_record())]), ticket(), ticket(21, section="## Parent\n\n#20")]
     v = run_ready(project, capsys, issues, "--permissions", "-")
     assert "- isn't JSON" in v[11]["notes"][0] and "- isn't JSON" in v[21]["notes"][0]
@@ -567,7 +567,7 @@ def test_permissions_on_standard_input_already_read_by_prs_say_so(project, capsy
 
     fake_gh.without_gh(tmp_path, monkeypatch)
     (project / "issues.json").write_text(json.dumps([spec(comments=[comment(spec_record())]), ticket()]))
-    monkeypatch.setattr("sys.stdin", io.StringIO("[]"))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO("[]".encode()), encoding="utf-8"))
     assert cli.main(["ready", "--issues", str(project / "issues.json"), "--prs", "-", "--json", "--permissions", "-"]) == 0
     notes = json.loads(capsys.readouterr().out)["ready"][0]["notes"]
     assert notes == ["spec #10: couldn't read its reviews (--permissions: standard input (-) is already --prs's: only one file can be read from it)"]
@@ -586,7 +586,7 @@ def test_under_fetch_standard_input_is_free_for_the_permissions(project, capsys,
 
     routes = {"repos/acme/demo/issues": fake_gh.pages([spec(comments=[comment(spec_record())]), ticket()]), "repos/acme/demo/pulls": fake_gh.pages([])}
     gh = fake_gh.install(tmp_path, monkeypatch, routes)
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"owner": "admin"})))
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(json.dumps({"owner": "admin"}).encode()), encoding="utf-8"))
     assert cli.main(["ready", "--fetch", "--issues", "-", "--json", "--permissions", "-"]) == 0
     assert json.loads(capsys.readouterr().out)["ready"][0]["notes"] == []
     assert not [p for p in routes_asked(gh) if "permission" in p]
