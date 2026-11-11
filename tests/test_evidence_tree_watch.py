@@ -370,6 +370,49 @@ def test_allow_dirty_leaves_an_ignored_folder_inside_an_untracked_one_be(tmp_pat
     assert _kept(root, sha) == ["unit-000.json", "unit-001.json", "unit-002.json"]
 
 
+# Folder names that start with `:`, which git reads as pathspec magic when named as given.
+COLON_NAMES = [":(x)", ":(glob)x", ":!neg", ":^neg", ":(icase)Q", ":(attr:foo)z", ":(exclude)e", ":(literal)l",
+               "::", ":(", ":colon", ":", ":)", ":(top)t"]
+
+
+def _colon_folders(root, names=COLON_NAMES) -> None:
+    """A clean tree with, at its top, each of `names` holding an empty
+    folder `y`, a folder `child` holding only an ignored `a.log`, and an
+    ignored folder `cache`."""
+    (root / ".gitignore").write_text(".workflow/\n*.log\ncache/\n")
+    git(root, "commit", "-qam", "logs and caches ignored")
+    for name in names:
+        for sub in ("y", "child", "cache"):
+            (root / name / sub).mkdir(parents=True)
+        (root / name / "child/a.log").write_text("ignored\n")
+    assert evidence.dirty_paths(root) == []
+
+
+@pytest.mark.parametrize("args", [(), ("--allow-dirty",)], ids=["plain", "allow-dirty"])
+def test_folders_named_like_pathspec_magic_leave_a_clean_run_clean(tmp_path, monkeypatch, capsys, args):
+    root = _repo(tmp_path)
+    _colon_folders(root)
+    sha = _sha(root)
+    assert _evidence(monkeypatch, root, *args) == 0
+    assert _headline(capsys.readouterr().out) == evidence.headline(sha, True)
+    assert _kept(root, sha) == ["unit-000.json", "unit-001.json", "unit-002.json"]
+
+
+@pytest.mark.parametrize("name", COLON_NAMES)
+def test_allow_dirty_reads_folders_named_like_pathspec_magic_as_named(tmp_path, monkeypatch, name):
+    # An ignored folder in one is left out; one that isn't ignored is watched.
+    root = _repo(tmp_path)
+    _colon_folders(root, [name])
+    before = evidence.tree_state(root)
+    assert f"{name}/y/" in before.folders and f"{name}/child/" in before.folders
+    assert f"{name}/cache/" not in before.folders
+    (root / name / "cache/m.pyc").write_text("x")
+    assert evidence.tree_changes(before, evidence.tree_state(root), untracked=True) == []
+    (root / name / "y/f.txt").write_text("x")
+    (root / name / "y/f.txt").unlink()
+    assert evidence.tree_changes(before, evidence.tree_state(root), untracked=True) == [f"{name}/y/"]
+
+
 def test_allow_dirty_on_a_clean_tree_with_no_workflow_folder_yet_is_a_clean_report(tmp_path, monkeypatch, capsys):
     # The run's own store, made in the project's folder, isn't a change beside it.
     root = _repo(tmp_path)

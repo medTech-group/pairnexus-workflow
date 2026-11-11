@@ -216,11 +216,14 @@ def _folder_mark(path: Path) -> tuple | None:
 
 
 def _ignored(root: Path, paths: list[str]) -> set[str]:
-    """Which of `paths`, named from `root`, git ignores there (`git check-ignore`)."""
-    quoted = {_git_quoted(x): x for x in paths}
+    """Which of `paths`, named from `root`, git ignores there (`git check-ignore`).
+    Each is named as `./<path>`, so one starting with `:` is never read as
+    pathspec magic."""
+    quoted = {_git_quoted("./" + x): x for x in paths}
     found: set[str] = set()
     for i in range(0, len(paths), 200):
-        out = _git_out(root, "-c", "core.quotePath=true", "check-ignore", "--", *paths[i : i + 200], ok=(0, 1))
+        named = ["./" + x for x in paths[i : i + 200]]
+        out = _git_out(root, "-c", "core.quotePath=true", "check-ignore", "--", *named, ok=(0, 1))
         found |= {quoted[x] for x in out.decode("ascii", errors="replace").split("\n") if x in quoted}
     return found
 
