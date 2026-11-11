@@ -4,7 +4,10 @@ merged since; after the merge, against the base it merged onto (the merge
 commit's first parent), never the base branch's latest.
 
 The repository below plays it out: the pull request adds a test and merges onto
-a base with 3; another pull request then adds 2 more to the base branch."""
+a base with 3; another pull request then adds 2 more to the base branch. A
+second one has the merge queue merge a head behind its base: the merge commit's
+first parent holds a pull request merged ahead of it, so the restart compares
+with where that parent and the head meet (`git merge-base`)."""
 
 from pathlib import Path
 
@@ -50,10 +53,50 @@ def test_after_the_merge_the_restart_compares_with_the_merge_commits_first_paren
     root, merge = _merged(tmp_path)
     parent = git(root, "rev-parse", f"{merge}^1").strip()
     head = git(root, "rev-parse", "HEAD").strip()
+    # A head level with its base: where they meet is the first parent itself.
+    assert git(root, "merge-base", "HEAD", f"{merge}^1").strip() == parent
     assert _evidence(monkeypatch, root, "--base-ref", f"{merge}^1") == 0
     out = capsys.readouterr().out
     assert out.splitlines()[0] == evidence.headline(head, True)
     assert f"Base branch (`{merge}^1` at `{parent[:12]}`): 3 passed; this commit: 4." in out
+
+
+def _merged_behind(tmp_path):
+    """(the checkout, the merge commit): the pull request adds 2 tests to a base
+    with 3; one ahead of it in the queue adds 3 and merges first; the queue then
+    merges this head, never updated, onto that base."""
+    root = _repo(tmp_path, {f"tests/test_{n}.txt": "pass" for n in range(3)})
+    git(root, "checkout", "-qb", "pr")
+    for n in (3, 4):
+        (root / f"tests/test_{n}.txt").write_text("pass")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "the pull request adds two tests")
+    git(root, "checkout", "-q", "main")
+    for n in (5, 6, 7):  # the pull request ahead of it in the queue
+        (root / f"tests/test_{n}.txt").write_text("pass")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "the pull request ahead of it adds three tests")
+    git(root, "merge", "-q", "--no-ff", "-m", "Merge pull request", "pr")
+    merge = git(root, "rev-parse", "HEAD").strip()
+    git(root, "update-ref", "refs/remotes/origin/main", "main")
+    git(root, "checkout", "-q", "pr")
+    return root, merge
+
+
+def test_a_head_merged_behind_its_base_never_had_the_first_parents_tests(tmp_path, monkeypatch, capsys):
+    # Round 1 of #726: `--base-ref <merge>^1` counts the tests of a pull request
+    # merged ahead of this one in the queue.
+    root, merge = _merged_behind(tmp_path)
+    assert _evidence(monkeypatch, root, "--base-ref", f"{merge}^1") == 1
+    assert "Fewer tests than the base branch" in capsys.readouterr().out
+
+
+def test_a_head_merged_behind_its_base_compares_with_where_it_left_the_base(tmp_path, monkeypatch, capsys):
+    root, merge = _merged_behind(tmp_path)
+    fork = git(root, "merge-base", "HEAD", f"{merge}^1").strip()
+    assert fork != git(root, "rev-parse", f"{merge}^1").strip()
+    assert _evidence(monkeypatch, root, "--base-ref", fork) == 0
+    assert f"Base branch (`{fork}` at `{fork[:12]}`): 3 passed; this commit: 5." in capsys.readouterr().out
 
 
 def _restart() -> str:
@@ -95,10 +138,17 @@ def test_build_ticket_reposts_the_evidence_to_come_line_for_the_new_head():
 def test_build_ticket_restarts_after_the_merge_against_the_base_it_merged_onto():
     rule = _restart()
     assert "until it has merged, `--base-ref origin/<base>`" in rule
-    assert "the base it merged onto, the merge commit's first parent" in rule
-    assert "`--base-ref <merge>^1`" in rule and "`merge_commit_sha`" in rule
-    # Why not the base branch's latest: it holds this pull request, and any merged since.
+    assert "the base it merged onto, as far as your head had it" in rule
+    assert "`--base-ref $(git merge-base HEAD <merge>^1)`" in rule and "`merge_commit_sha`" in rule
+    assert "`--base-ref <merge>^1`" not in rule
+    # The merge commit's first parent when the head was level with it; where
+    # the head left the base when the queue merged it behind (step 3).
+    assert "the merge commit's first parent when your head was level with it" in rule
+    assert "where your head left the base when the merge queue merged it behind (step 3)" in rule
+    # Why neither the base branch's latest nor a first parent alone: they hold
+    # pull requests merged after or ahead of this one.
     assert "holds this pull request and any merged after it" in rule
+    assert "`<merge>^1` any merged ahead of it in the queue" in rule
 
 
 def test_a_stop_the_restart_covers_is_no_reason_for_no_report():
