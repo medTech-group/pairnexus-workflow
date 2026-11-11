@@ -196,13 +196,42 @@ def test_the_limit_counts_from_the_conflict_note_and_the_pushes_after_it():
     ) in h
 
 
-def test_before_the_session_notices_the_limit_waits_one_of_its_check_ins():
+CONDUCTOR_LINE = "#n: #PR conflicts with the base, its session kept to merge it in"
+
+
+def test_before_the_session_notices_the_limit_counts_from_the_first_check_in_that_saw_the_conflict():
+    # round 1 of #686: one interval of grace from the earlier note lost the race.
+    # With check-ins every 20 minutes, the conflict at T0+179, the session's
+    # next check-in near T0+201 and the conductor's at T0+200.5, the session
+    # was archived before its conflict note.
     h = _hold_conflict()
+    assert "180 minutes plus the charter's `limits.check_in_minutes`" not in h
     assert (
         "Before any conflict note, while your `WF merge-check` on its open pull request gives a `conflict` reason, "
-        "the limit is 180 minutes plus the charter's `limits.check_in_minutes`, so the session's own check-in, which "
-        "merges the base in, comes before the archive."
+        "the limit counts from the later of the session's latest note and the first of your check-ins that saw the "
+        "conflict:"
     ) in h
+    assert (
+        f"at that check-in, post \"{CONDUCTOR_LINE}\" on the tracking issue, unless that line is up since the "
+        "session's latest note, and count from that line's `created_at`."
+    ) in h
+    assert (
+        "The conflict can come just before the limit, and the session's check-in a full interval after it, so a "
+        "grace from the earlier note alone could archive the session before its conflict note."
+    ) in h
+    # the line is the conductor's, never the session's conflict note
+    assert CONDUCTOR_LINE != NOTE.replace("#<n>", "#n").replace("#<PR>", "#PR")
+
+
+def test_the_conductors_conflict_line_still_has_a_limit():
+    # the other side: with no conflict the limit is the usual one, and from the
+    # conductor's line it is still 180 minutes, past which the archive comes
+    h = _hold_conflict()
+    assert h.index("Before any conflict note, while your `WF merge-check`") < h.index(CONDUCTOR_LINE)
+    hold = _hold()
+    assert "**The limit:** 180 minutes since that note was posted (its `created_at`)" in hold
+    assert "Past it, archive the session all the same" in hold
+    assert "never by a count of check-ins" in hold
 
 
 def test_the_hold_still_says_where_its_limit_runs_out():
