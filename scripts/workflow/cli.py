@@ -1265,7 +1265,7 @@ def cmd_graph(a) -> int:
     notes: list[str] = []
     try:
         results, unread = graph_mod.cites(root, prof.base_branch, ids, issues, prs, repo=prof.repo,
-                                          sensitive=list(prof.sensitive_patterns), note=lambda t: print(f"{name}: {t}", file=sys.stderr))
+                                          sensitive=list(prof.sensitive_patterns), note=notes.append)
     except graph_mod.GraphError as e:
         print(f"{name}: {e}", file=sys.stderr)
         return 1

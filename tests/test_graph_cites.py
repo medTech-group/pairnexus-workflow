@@ -539,6 +539,19 @@ def test_without_a_profile_it_says_so(tmp_path, monkeypatch, capsys):
     assert "profile" in capsys.readouterr().err
 
 
+
+def test_a_fetch_that_failed_shows_under_the_list_or_on_stderr_with_json(root, monkeypatch, capsys):
+    _push(root, {"docs/a.md": "For #12.\n"})
+    git(root, "remote", "set-url", "origin", str(root.parent / "gone.git"))
+    code, out, err = _run(monkeypatch, capsys, root, "#12")
+    assert code == 0 and err == ""
+    lines = out.splitlines()
+    assert lines[:3] == ["#12: 1 passage in 1 file, 0 open issues", "  docs/a.md", "    1: For #12."]
+    assert lines[3] == "" and lines[4].startswith("couldn't fetch origin/main (") and lines[4].endswith("): using the origin/main already here")
+    code, out, err = _run(monkeypatch, capsys, root, "#12", "--json")
+    assert code == 0 and len(json.loads(out)[0]["passages"]) == 1
+    assert err.startswith("workflow graph cites: couldn't fetch origin/main (")
+
 def test_without_origin_base_it_says_so(root, monkeypatch, capsys):
     git(root, "remote", "remove", "origin")
     code, out, err = _run(monkeypatch, capsys, root, "#12")
