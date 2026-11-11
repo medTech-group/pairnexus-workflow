@@ -1751,16 +1751,23 @@ def test_the_changelog_note_for_links_outside_ascii_is_not_under_a_released_vers
 def test_the_words_say_a_link_outside_ascii_is_fetched_without_its_userinfo():
     """#532: `fetch` sends a link outside ASCII without its userinfo, as a
     browser does. The skill, the changelog's note, the architecture page and
-    `ascii_link`'s docstring say so, and none of them says the userinfo is sent."""
+    `ascii_link`'s docstring say so, and none of them says the userinfo is sent.
+    Each says it of a link outside ASCII only: a link in ASCII is sent as
+    written, its userinfo with it (`test_page_fetching`)."""
     log = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
-    entry = log[log.index("(#532, split out of #506") :]
+    entry = log[log.index("**`workflow research` fetches a link written with letters outside ASCII** (#532") :]
     page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
-    places = {
-        "the study skill": SKILL.read_text(encoding="utf-8"),
+    line = next(l for l in page.splitlines() if l.startswith("- `ascii_link`"))
+    skill = SKILL.read_text(encoding="utf-8")
+    doc = research.ascii_link.__doc__
+    places = {  # each place's words on a link outside ASCII, and nothing else
+        "the study skill": next(p for p in skill.split("\n\n") if p.startswith("A link holding letters outside ASCII")),
         "CHANGELOG.md": entry[: entry.index("\n\n")],
-        "the architecture page": next(l for l in page.splitlines() if l.startswith("- `ascii_link`")),
-        "ascii_link": research.ascii_link.__doc__,
+        "the architecture page": next(s for s in line.split(". ") if "userinfo" in s and "fetch" in s),
+        "ascii_link": doc[doc.index("A link in ASCII is returned as it is. Otherwise") + len("A link in ASCII is returned as it is.") :],
     }
+    assert "outside ASCII" in places["the architecture page"], "the architecture page"
+    assert "without its userinfo" not in doc[: doc.index("Otherwise")], "ascii_link"
     for where, text in places.items():
         text = re.sub(r"\s+", " ", text)
         assert "without its userinfo" in text, where
