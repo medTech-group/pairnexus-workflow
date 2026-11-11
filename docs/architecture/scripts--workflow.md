@@ -25,6 +25,8 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `sentences`: in `graph.py`, a text's sentences as spec #682's "What it gives back" ends them (an end mark with any closing quote, bracket, emphasis or backtick before a space or the line's end, except after "ans", "e.g" and "i.e"; a blank line; the end of a heading, a list item or a table row), with each line's pieces mapped to them, so a citation finds its sentence. Answer ids (#745) find theirs with it.
 - `is_spec`: in `issues.py`, whether an issue is a spec: the `spec` label, or a "Spec:" title. `is_build_ticket`, `workflow status` and `workflow graph`'s `kind` use it.
 - `replaces_lines`: in `graph.py`, the lines of a body's own `## Replaces` section, from its heading to the next, never from a fenced block or a `>` quote. `built_by` (#746) reads its ids from these lines.
+- `holds_sensitive`: in `profile.py`, whether a text matches any of the profile's `[sensitive].patterns`. The guard (`_text_holds_sensitive`, which `_bash_holds_sensitive` calls) and `workflow graph`'s `_shown` use it, rather than each keeping its own `re.search` loop over the patterns (#756).
+- `sensitive_match`: in `profile.py`, the first of the patterns found in a text, else None; the guard's two refusals that name the pattern use it, and `holds_sensitive` reads it (#756).
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Rules

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**One shared helper for the sensitive-data match** (#756, found in the review of #744's pull request). `workflow graph cites` (#744) left out a sentence matching the profile's `[sensitive].patterns` with its own `re.search` loop over them, a copy of the guard's. Both now call `holds_sensitive(text, patterns)` in `scripts/workflow/profile.py`, beside the profile's `sensitive_patterns`; the guard's two refusals that name the pattern matched (a command's posts, and a GitHub tool's text) use its sibling `sensitive_match`, which gives the first pattern found. What is refused, and what `workflow graph` leaves out, is unchanged.
+
+- **For projects updating:** nothing to do. Tests: `tests/test_sensitive_match.py`.
+
 **`workflow graph cites`: what rests on an issue or an ADR** (#744, spec #682's first ticket). A decision that changes leaves passages, tickets and specs resting on the old one, and nothing found them: a session listed them by hand, or missed some. `workflow graph cites <id>... --issues F --prs F | --fetch [--json]` lists them, built fresh from git and the issues' text each time, with no model and no stored graph. It is advice: nothing blocks on it.
 
 - **The ids:** `#n` and `ADR:NNNN`, several in one run. Found as `#n` (and `owner/repo#n`, in this repository; a link to the issue isn't a citation form), "ADR 0001", "ADR-0001" or a path under `adr/` (compared by number, so `ADR:7` is `ADR:0007`). Answer ids (`#n:answer:N`) are refused for now: #745 adds them. A path given as an id, a research note's among them, is refused too, in one line (exit 2): #762 adds research notes' paths.
