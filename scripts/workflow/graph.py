@@ -10,8 +10,8 @@ it lists, counts first:
 - every open issue and open pull request whose body cites it, with the
   sentence, its `kind` and whether it is `claimed`.
 
-The citation forms are built in: `#n` (and `owner/repo#n` or a link to the
-issue or pull request, for this repository); "ADR 0001", "ADR-0001" and paths
+The citation forms are built in: `#n` (and `owner/repo#n`, for this
+repository); "ADR 0001", "ADR-0001" and paths
 under `adr/`, compared by number; a note's path, its folder's path, or either
 from the `research/` folder on (a relative link). Left out: the vendored kit
 (`lock.json`'s `files`, `orphaned` and the `<file>.new` its `conflicts` name),
@@ -125,11 +125,7 @@ def _note_forms(path: str) -> str:
 def citation_pattern(id_: Id, repo: str | None) -> re.Pattern:
     """Where the id is cited in a line of text."""
     if id_.kind == "issue":
-        n = id_.number
-        forms = [rf"(?<![\w#/.&-])(?:(?P<repo>[\w.-]+/[\w.-]+))?#{n}(?!\d)\b"]
-        if repo:
-            forms.append(rf"https?://(?:www\.)?github\.com/{re.escape(repo)}/(?:issues|pull)/{n}(?!\d)")
-        return re.compile("|".join(forms), re.I)
+        return re.compile(rf"(?<![\w#/.&-])(?:(?P<repo>[\w.-]+/[\w.-]+))?#{id_.number}(?!\d)\b", re.I)
     if id_.kind == "adr":
         return re.compile(r"(?<![\w])ADR[ -]0*(?P<n>\d+)(?!\d)|(?<![\w.-])adr/0*(?P<p>\d+)(?!\d)", re.I)
     return re.compile(_note_forms(id_.path))
@@ -157,7 +153,7 @@ def _grep_pattern(id_: Id) -> str:
     """A loose extended regex (case-insensitive) that every file citing the id
     matches, to find the files worth reading."""
     if id_.kind == "issue":
-        return rf"#{id_.number}|/(issues|pull)/{id_.number}"
+        return rf"#{id_.number}"
     if id_.kind == "adr":
         return r"adr"
     p = PurePosixPath(id_.path)

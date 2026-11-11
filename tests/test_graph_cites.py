@@ -99,11 +99,10 @@ def test_an_issue_is_found_by_its_number_and_not_by_a_longer_one_or_a_word(root,
     assert _passages(got) == [("docs/a.md", 1, "Built for #12 first."), ("src/b.py", 1, "x = 1 # see acme/demo#12.")]
 
 
-def test_a_link_to_the_issue_or_pull_request_in_this_repository_cites_it(root, monkeypatch, capsys):
-    _push(root, {"docs/a.md": "See https://github.com/acme/demo/issues/12 for it.\n\n"
-                              "And https://github.com/acme/demo/pull/12.\n\nNot https://github.com/other/repo/issues/12.\n"})
-    got = _one(monkeypatch, capsys, root, "#12")
-    assert [p["line"] for p in got["passages"]] == [1, 3]
+def test_a_link_to_the_issue_or_pull_request_is_not_a_citation_form(root, monkeypatch, capsys):
+    """Spec #682's citation forms are `#n`, built in only: a link isn't one."""
+    _push(root, {"docs/a.md": "See https://github.com/acme/demo/issues/12 for it.\n\nAnd https://github.com/acme/demo/pull/12.\n"})
+    assert _one(monkeypatch, capsys, root, "#12")["passages"] == []
 
 
 def test_the_commands_own_answer_id_in_prose_cites_its_issue(root, monkeypatch, capsys):
