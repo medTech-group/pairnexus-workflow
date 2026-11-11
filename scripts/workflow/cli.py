@@ -101,8 +101,43 @@ from .profile import PROFILE_PATH, ProfileError, code_rule, load, project_root, 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
 
+class InputUnreadable(OSError):
+    """A file given to a command that can't be read (#687): its OSError's errno,
+    reason and file name as they were, so a command that catches OSError words
+    it as before; `main` refuses any other in one line (`_read_refusal`)."""
+
+
+class InputNotText(UnicodeDecodeError):
+    """A file given to a command that isn't UTF-8 text (#687): its decode error
+    as it was, and the path given, `main`'s one line as `InputUnreadable`'s."""
+
+    path = ""
+
+
 def _read(path: str) -> str:
-    return sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    """A file's text, or standard input's for `-`. A file that can't be read
+    raises `InputUnreadable`, one that isn't UTF-8 text `InputNotText`."""
+    try:
+        if path == "-":
+            if sys.stdin is None:
+                raise InputUnreadable(None, "it is closed", "-")
+            return sys.stdin.read()
+        return Path(path).read_text(encoding="utf-8")
+    except InputUnreadable:
+        raise
+    except OSError as e:
+        raise InputUnreadable(e.errno, e.strerror or str(e), path) from e
+    except UnicodeDecodeError as e:
+        err = InputNotText(e.encoding, e.object, e.start, e.end, e.reason)
+        err.path = path
+        raise err from e
+
+
+def _read_refusal(e: InputUnreadable | InputNotText) -> str:
+    """`main`'s one line for a file `_read` couldn't read, naming it."""
+    path = e.path if isinstance(e, InputNotText) else e.filename
+    name = "standard input (-)" if path == "-" else f"`{reviews_mod._shown(path, len(str(path)))}`"
+    return f"workflow: can't read {name}: " + ("it isn't UTF-8 text" if isinstance(e, InputNotText) else e.strerror)
 
 
 def _json(path: str):
@@ -2408,6 +2443,9 @@ def main(argv: list[str] | None = None) -> int:
         p.error("state join: give --fetch or --issues and --permissions, not both")
     try:
         return a.fn(a)
+    except (InputUnreadable, InputNotText) as e:
+        print(_read_refusal(e), file=sys.stderr)
+        return 1
     except (ProfileError, state_mod.StateError, render_mod.RenderError, evidence_mod.EvidenceError, vendor_mod.VendorError) as e:
         print(f"workflow: {e}", file=sys.stderr)
         return 1
