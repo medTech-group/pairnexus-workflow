@@ -66,11 +66,24 @@ def test_build_ticket_starts_a_run_its_head_outran_again_merged_or_not():
     # Both kinds of stop, in one sentence: "HEAD moved", and a run the session
     # stopped before changing its checkout, which counts as one ("While it runs").
     assert '("HEAD moved", a run you stopped before changing your checkout among them)' in rule
-    assert "start it again at once on your checkout's head" in rule
+    assert "start it again on your checkout's head" in rule
     assert "as a tracked background task" in rule
     assert "whether or not the pull request has merged since" in rule
     # The same options: `--all` where step 2 ran it with `--all`.
     assert "with the same options" in rule and "`--all`" in rule
+
+
+def test_build_ticket_restarts_a_run_you_stopped_only_once_your_change_is_made():
+    rule = _restart()
+    # A run that stopped by itself starts again at once ...
+    assert "one that stopped by itself at once" in rule
+    # ... but one you stopped ("While it runs": stop it first, then make the
+    # change) waits for the change, or it runs beside it on the old head.
+    assert (
+        "one you stopped once your change is made (an edit or a merge of the base committed and pushed, "
+        "a pull done), on the new head, never between the stop and the change"
+    ) in rule
+    assert "start it again at once" not in rule
 
 
 def test_build_ticket_restarts_after_the_merge_against_the_base_it_merged_onto():
