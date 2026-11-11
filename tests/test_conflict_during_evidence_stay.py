@@ -262,10 +262,11 @@ def test_a_conflict_that_comes_back_after_a_check_in_that_gave_none_gets_a_new_l
     assert "unless that line is up since the session's latest note, and count from that line's" not in h
     assert "so gets a new line" not in h
     assert (
-        "So a conflict that goes on keeps its first line, never a new one at each check-in, and one that comes back "
-        "after a check-in that read the pull request and found no conflict gets a new line."
+        "So a conflict that goes on keeps its line until the session's next note or conflict note, never a new one "
+        "at each check-in, and one that comes back after a check-in that read the pull request and found no "
+        "conflict gets a new line."
     ) in h
-    # the other side: a conflict that goes on keeps its first line, so its
+    # the other side: a conflict that goes on keeps its line, so its
     # limit still runs out 180 minutes after that line
     hold = _hold()
     assert "Past it, archive the session all the same" in hold
@@ -290,6 +291,31 @@ def test_a_check_in_that_could_not_tell_keeps_the_conflicts_line():
     ) in h
     # and a line kept that way still runs out 180 minutes after it
     assert "Past it, archive the session all the same" in _hold()
+
+
+def test_a_conflict_that_goes_on_keeps_its_line_only_until_the_sessions_next_note_or_conflict_note():
+    # Correctness pass 1 of #686: check-ins every 20 minutes. Ready note R at
+    # T0, a conflict from T0+1, the conductor's line L1 at T0+5, the session's
+    # conflict note C1 at T0+10, its push at T0+35. At T0+25 `merge-check`
+    # still gave `conflict`: the rule for posting said L1 wasn't up since C1,
+    # so post a new line, while "keeps its first line" (and the changelog)
+    # said post nothing. One answer: the rule for posting.
+    h = _hold_conflict()
+    assert "keeps its first line" not in h
+    assert (
+        "So a conflict that goes on keeps its line until the session's next note or conflict note, never a new one "
+        "at each check-in, and one that comes back after a check-in that read the pull request and found no "
+        "conflict gets a new line."
+    ) in h
+    # the rule for posting it gives the same answer: a line from before the
+    # session's conflict note is never "up since" it
+    assert (
+        "unless one is up since the later of the session's latest note and its conflict note (with neither, since "
+        "the ticket's `started_at`)"
+    ) in h
+    notes = since_0110()
+    assert "a conflict that goes on keeps its first one" not in notes
+    assert "a conflict that goes on keeps its line until the session's next note or conflict note" in notes
 
 
 def test_the_conductors_line_holds_while_a_conflict_note_is_up():
