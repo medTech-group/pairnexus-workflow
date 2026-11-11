@@ -1186,15 +1186,33 @@ def cmd_preview(a) -> int:
     return 0
 
 
+def _graph_item(i) -> bool:
+    """An issue or pull request as `graph cites` reads it: an object with a
+    positive whole `number`, and the fields it reads (`title`, `body`,
+    `state`, `labels`, `assignees`, `sub_issues_summary`'s `total`) absent,
+    null or of the type GitHub gives."""
+    if not (isinstance(i, dict) and fetch_mod._id(i.get("number")) and i["number"] > 0):
+        return False
+
+    def named(v, key: str) -> bool:  # a list of names, or of objects with that name as text
+        return v is None or isinstance(v, list) and all(isinstance(x, str) or isinstance(x, dict) and isinstance(x.get(key), str) for x in v)
+
+    subs = i.get("sub_issues_summary")
+    return (all(i.get(k) is None or isinstance(i.get(k), str) for k in ("title", "body", "state"))
+            and named(i.get("labels"), "name") and named(i.get("assignees"), "login")
+            and (not isinstance(subs, dict) or subs.get("total") is None or isinstance(subs.get("total"), int)))
+
+
 def _graph_items(value, what: str, given: str) -> list[dict]:
     """`graph cites`'s issues or pull requests (`what`), their pages
-    flattened: a list of objects, or a list of pages of them, each with a
-    positive whole `number`. Raises ValueError, its words starting with
-    `given` (`--issues isn't`), for anything else (an error object GitHub
-    gave instead, a string)."""
+    flattened: a list of `_graph_item`s, or a list of pages of them. Raises
+    ValueError, its words starting with `given` (`--issues isn't`), for
+    anything else (an error object GitHub gave instead, a string, a body
+    that isn't text)."""
     pages = [x if isinstance(x, list) else [x] for x in value] if isinstance(value, list) else None
-    if pages is None or not all(isinstance(i, dict) and fetch_mod._id(i.get("number")) and i["number"] > 0 for p in pages for i in p):
-        raise ValueError(f"{given} a list of {what} as the GitHub API lists them (objects, or pages of them, each with a positive whole number)")
+    if pages is None or not all(_graph_item(i) for p in pages for i in p):
+        raise ValueError(f"{given} a list of {what} as the GitHub API lists them (objects, or pages of them, each with a positive whole number, "
+                         "and its title, body, state, labels and assignees as GitHub gives them)")
     return _fetch_items(value)
 
 
@@ -1230,7 +1248,14 @@ def cmd_graph(a) -> int:
             print(f"{name}: couldn't fetch the issues and pull requests ({str(e)[:300]}): give --issues F and --prs F instead", file=sys.stderr)
             return 1
     else:
-        issues, prs = _json(a.issues), _json(a.prs)
+        flag = "--issues"
+        try:
+            issues = _json(a.issues)
+            flag = "--prs"
+            prs = _json(a.prs)
+        except json.JSONDecodeError as e:
+            print(f"{name}: {flag} isn't JSON ({e})", file=sys.stderr)
+            return 2
     try:
         issues = _graph_items(issues, "issues", "gh api's issues aren't" if a.fetch else "--issues isn't")
         prs = _graph_items(prs, "pull requests", "gh api's pull requests aren't" if a.fetch else "--prs isn't")
