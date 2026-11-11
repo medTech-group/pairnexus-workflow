@@ -1187,9 +1187,14 @@ def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0, group
     while not written() and p.poll() is None and time.monotonic() < end:
         time.sleep(0.05)
     started = written()
-    # Also stops a run whose fake never wrote its pid.
+    # Also stops a run whose fake never wrote its pid. A run that has ended
+    # is sent nothing: its group is gone, and its pid may be another's.
     if group:
-        os.killpg(p.pid, signal.SIGINT)
+        if p.poll() is None:
+            try:
+                os.killpg(p.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
     else:
         p.send_signal(signal.SIGINT)
     try:
@@ -1329,6 +1334,18 @@ def test_a_ctrl_c_test_fails_clearly_when_the_fake_never_wrote_its_pid(tmp_path)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(path)}
     with pytest.raises(AssertionError, match="never wrote its pid"):
         _ctrl_c(root / ".claude/workflow/bin/workflow.py", ["doctor"], root, env, marker, wait=1)
+
+
+@pytest.mark.parametrize("group", [False, True], ids=["pid", "group"])
+def test_a_ctrl_c_test_fails_clearly_when_the_run_ended_before_the_fake_wrote_its_pid(tmp_path, group):
+    # Doctor finishes on its own and nothing writes the pid: the run has ended
+    # (and been reaped) by the time the Ctrl-C would go, so none is sent, to
+    # its pid or its group, and the failure says why (#717).
+    root = _project(tmp_path)
+    marker = tmp_path / "child.pid"
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(_bin(tmp_path, claude=None))}
+    with pytest.raises(AssertionError, match="never wrote its pid"):
+        _ctrl_c(root / ".claude/workflow/bin/workflow.py", ["doctor"], root, env, marker, group=group)
 
 
 def test_a_missing_folder_under_home_is_shown_from_home(tmp_path):
