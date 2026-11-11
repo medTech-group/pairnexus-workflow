@@ -19,7 +19,7 @@ import pytest
 from conftest import git
 from test_evidence_tree import _act, _evidence, _ran, _repo, _sha
 
-from workflow import evidence
+from workflow import evidence, proc
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -355,3 +355,38 @@ def test_the_tree_state_is_a_helper_listed_in_its_page(tmp_path):
     (root / "x.txt").write_text("x")
     assert evidence.tree_changes(after, evidence.tree_state(root)) == []
     assert evidence.tree_changes(after, evidence.tree_state(root), untracked=True) == ["./", "x.txt"]  # and the folder it appeared in
+
+
+def test_the_tree_look_runs_its_git_commands_through_the_kits_runner(tmp_path, monkeypatch):
+    # `proc.run`, the kit's one runner for its own short commands: with a
+    # timeout, and nothing left running when the wait ends; the submodule's HEAD too.
+    root = _with_submodule(tmp_path)
+    calls = []
+    real = proc.run
+
+    def spy(argv, **kw):
+        calls.append((argv, Path(kw["cwd"]).resolve(), kw.get("timeout")))
+        return real(argv, **kw)
+
+    monkeypatch.setattr(proc, "run", spy)
+    before = evidence.tree_state(root)
+    assert ["git", "rev-parse", "HEAD"] in [argv for argv, cwd, _ in calls if cwd == (root / "lib").resolve()]
+    assert {argv[1] for argv, _, _ in calls} >= {"rev-parse", "ls-files"}
+    assert all(argv[0] == "git" and timeout for argv, _, timeout in calls)
+    assert before == evidence.tree_state(root)
+
+
+@pytest.mark.parametrize(
+    "done, why",
+    [(proc.Done(False), "couldn't start"), (proc.Done(True, timed_out=True), "didn't finish"), (proc.Done(True, code=128, err=b"bad"), "bad")],
+    ids=["not started", "timed out", "failed"],
+)
+def test_a_git_command_of_the_tree_look_that_doesnt_end_well_stops_the_run(tmp_path, monkeypatch, done, why):
+    root = _with_submodule(tmp_path)
+    real = proc.run
+    # Only the submodule's HEAD read goes wrong: it never passes as an empty HEAD.
+    monkeypatch.setattr(
+        proc, "run", lambda argv, **kw: done if argv[1:] == ["rev-parse", "HEAD"] and Path(kw["cwd"]).name == "lib" else real(argv, **kw)
+    )
+    with pytest.raises(evidence.EvidenceError, match=why):
+        evidence.tree_state(root)

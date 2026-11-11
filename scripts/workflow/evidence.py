@@ -30,7 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
-from . import repair
+from . import proc, repair
 from .posts import AGENT_MARKER
 from .profile import Profile, Suite
 
@@ -63,6 +63,8 @@ _HEADLINE = re.compile(
 # A change under these runs every suite: they can change what the selection runs.
 DECIDES = (".github/workflows/", ".claude/workflow/")
 SELECT_TIMEOUT = 120
+# For each git command of the tree look (`_git_out`): generous, for a big checkout.
+GIT_TIMEOUT = 300
 # What commands.select_suites prints when no suite is needed (printing nothing runs every suite).
 NONE_NEEDED = "none"
 
@@ -178,10 +180,18 @@ class TreeState(NamedTuple):
 
 
 def _git_out(root: Path, *args: str) -> bytes:
-    p = subprocess.run(["git", *args], cwd=root, capture_output=True)
-    if p.returncode:
-        raise EvidenceError(f"`git {' '.join(args)}` failed in {root}: {p.stderr.decode(errors='replace').strip()[:200]}")
-    return p.stdout
+    """What `git <args>` printed in `root`, run by the kit's runner (`proc.run`:
+    nothing left running when the wait ends); an EvidenceError when it couldn't
+    start, didn't finish in GIT_TIMEOUT seconds or failed."""
+    done = proc.run(["git", *args], cwd=root, timeout=GIT_TIMEOUT, stderr=True)
+    what = f"`git {' '.join(args)}` in {root}"
+    if not done.started:
+        raise EvidenceError(f"{what} couldn't start")
+    if done.timed_out:
+        raise EvidenceError(f"{what} didn't finish in {GIT_TIMEOUT} seconds")
+    if done.code:
+        raise EvidenceError(f"{what} failed: {done.err.decode(errors='replace').strip()[:200]}")
+    return done.out
 
 
 def _tracked(
@@ -209,8 +219,7 @@ def _tracked(
     for name, info in entries.items():
         path = root / name
         if any(i.startswith("160000 ") for i in info) and (path / ".git").exists():
-            head = subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=path, capture_output=True, text=True)
-            files[prefix + name] = (tuple(info), "submodule", head.stdout.strip())
+            files[prefix + name] = (tuple(info), "submodule", _git_out(path, "rev-parse", "HEAD").strip())
             _tracked(path, f"{prefix}{name}/", files, untracked, folders)
             continue
         try:
