@@ -670,6 +670,7 @@ class CodeRule:
 
 
 GIT_TIMEOUT = 5  # seconds, for `_git` unless a call gives its own: a seam the Ctrl-C tests raise
+CODE_FILES_TIMEOUT = 20  # seconds, for `_code_warnings`' tracked files (a whole tree's): a seam too (#690)
 
 
 def _git(root: Path, *args: str, timeout: float | None = None) -> str | None:
@@ -842,7 +843,7 @@ def _code_warnings(profile: Profile) -> list[str]:
     if profile.code_paths:
         from .guard import matches as path_matches  # the guard's own matching, as for protected_paths
 
-        tracked = _git(profile.root, "ls-files", "-z", timeout=20) or ""
+        tracked = _git(profile.root, "ls-files", "-z", timeout=CODE_FILES_TIMEOUT) or ""
         both = [
             f
             for f in tracked.split("\0")

@@ -336,11 +336,12 @@ STATUS_GIT = ["ls-files -z", "check-ref-format refs/remotes/origin/main", "rev-p
               "show refs/remotes/origin/main:.claude/workflow/profile.toml"]
 
 
-def _git_project(tmp_path):
-    """A checkout with a commit and `origin/main`, so status reads the base's profile."""
+def _git_project(tmp_path, **kw):
+    """A checkout with a commit and `origin/main`, so status reads the base's
+    profile; `kw` go to `_project`."""
     import shutil
 
-    root, git = _project(tmp_path), shutil.which("git")
+    root, git = _project(tmp_path, **kw), shutil.which("git")
     ident = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
     for args in (["init", "-q"], ["add", "-A"], [*ident, "commit", "-qm", "x"], ["update-ref", "refs/remotes/origin/main", "HEAD"]):
         subprocess.run([git, *args], cwd=root, check=True, capture_output=True)

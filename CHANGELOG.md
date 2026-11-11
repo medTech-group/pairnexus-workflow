@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**A Ctrl-C during the profile check's `git` calls is tested to leave nothing running** (#690).
+
+- **`workflow doctor`:** since #689 the profile check's `git` calls (the base's profile read: `check-ref-format`, `rev-parse`, `show`; and, for a profile that names code, its tracked files: `ls-files -z`) run through the shared runner, so a Ctrl-C at any of them stops doctor quietly (`workflow doctor: stopped`, exit 130) and kills what that `git` started. A doctor-level test now holds this at each of those calls, with the Ctrl-C sent to doctor alone and to its whole process group (`tests/test_doctor_profile_git.py`).
+- **A seam for the tracked files' timeout:** `_code_warnings`' `ls-files` gave a literal 20 seconds; it is now `profile.CODE_FILES_TIMEOUT`, which the Ctrl-C tests raise along with the others, so a slow `git` on a busy machine is still running when the test's Ctrl-C comes.
+- **For projects updating:** nothing to do.
+
 **A Ctrl-C during `workflow status`'s own `git` calls stops it quietly, with nothing left running** (#689).
 
 - **`workflow status`:** a Ctrl-C while it ran one of its own `git` calls (the tracked files it counts, and the base's profile it reads for who writes code) gave a `KeyboardInterrupt` traceback (exit -2) rather than `workflow status: stopped` (exit 130), and left whatever that `git` had started running. A Ctrl-C once `workflow status` has started its checks is now the quiet stop, and those `git` calls run as doctor's commands do: in a session of their own, whose whole process group is killed when the wait ends (a timeout or a Ctrl-C).

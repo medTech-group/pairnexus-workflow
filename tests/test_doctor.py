@@ -1144,8 +1144,9 @@ def _gone(pid, seconds=5.0):
 
 
 # Runs the CLI's entry point as `python3 <script> <args>` does, with doctor's
-# RUN_TIMEOUT, the profile's GIT_TIMEOUT and status's OWN_FILES_TIMEOUT set
-# first: the seams a Ctrl-C test controls across the process.
+# RUN_TIMEOUT, the profile's GIT_TIMEOUT and CODE_FILES_TIMEOUT (#690) and
+# status's OWN_FILES_TIMEOUT set first: the seams a Ctrl-C test controls
+# across the process.
 _LAUNCH = """\
 import runpy, sys
 from pathlib import Path
@@ -1153,12 +1154,12 @@ script, timeout = sys.argv[1], float(sys.argv[2])
 sys.argv = [script, *sys.argv[3:]]
 sys.path.insert(0, str(Path(script).resolve().parent))
 from workflow import doctor, profile, status
-doctor.RUN_TIMEOUT = profile.GIT_TIMEOUT = status.OWN_FILES_TIMEOUT = timeout
+doctor.RUN_TIMEOUT = profile.GIT_TIMEOUT = profile.CODE_FILES_TIMEOUT = status.OWN_FILES_TIMEOUT = timeout
 runpy.run_path(script, run_name="__main__")
 """
 
 
-def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
+def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0, group=False):
     """Start `workflow <args>` from `script`, press Ctrl-C once the fake it
     runs has written its pid to `marker`, and give (exit code, stderr).
 
@@ -1170,7 +1171,9 @@ def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
     before a slow fake had started, so the run's timeouts (doctor's, and
     status's and the profile's `git` calls', #689) are set far past the
     wait. The pid must be there before the signal: a fake that never wrote it
-    fails here, saying so, rather than being sent a Ctrl-C blind."""
+    fails here, saying so, rather than being sent a Ctrl-C blind. With
+    `group`, the run starts a process group of its own and the SIGINT goes
+    to that whole group, as a terminal's Ctrl-C does (#690)."""
     import signal
     import time
 
@@ -1179,12 +1182,16 @@ def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
 
     p = subprocess.Popen([sys.executable, "-B", "-c", _LAUNCH, str(script), str(run_timeout), *args], cwd=root, env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL), start_new_session=group)
     end = time.monotonic() + wait
     while not written() and p.poll() is None and time.monotonic() < end:
         time.sleep(0.05)
     started = written()
-    p.send_signal(signal.SIGINT)  # also stops a run whose fake never wrote its pid
+    # Also stops a run whose fake never wrote its pid.
+    if group:
+        os.killpg(p.pid, signal.SIGINT)
+    else:
+        p.send_signal(signal.SIGINT)
     try:
         _, err = p.communicate(timeout=20)
     except subprocess.TimeoutExpired:
