@@ -522,9 +522,9 @@ def cites(root: Path, base: str, ids: list[Id], issues: list[dict], prs: list[di
     already here is read instead). Raises GraphError."""
     try:
         ref = small_mod.base_ref(root, base, note, "the profile's project.base_branch")
-    except small_mod.CantMeasure as e:
+        texts = files_citing(root, ref, ids, vendored(root, ref, note))
+    except small_mod.CantMeasure as e:  # git couldn't run, or didn't finish
         raise GraphError(str(e)) from None
-    texts = files_citing(root, ref, ids, vendored(root, ref, note))
     got_runs = runs(issues)
     bodies = open_bodies(issues, prs, repo, got_runs.by_hand)
     results = []

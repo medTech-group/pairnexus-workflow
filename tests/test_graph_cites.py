@@ -566,3 +566,22 @@ def test_one_spec_test_shared_by_the_graph_status_and_build_tickets():
     assert "is_spec(" in inspect.getsource(issues.is_build_ticket) and "is_spec(" in inspect.getsource(graph.kind_of)
     page = (Path(__file__).resolve().parents[1] / "docs/architecture/scripts--workflow.md").read_text()
     assert "Covers: scripts/workflow/issues.py\n" in page and "\n- `is_spec`: in `issues.py`" in page
+
+
+def test_git_failing_after_the_fetch_is_one_line_not_a_traceback(root, monkeypatch, capsys):
+    import subprocess
+
+    from workflow import small
+
+    _push(root, {"docs/a.md": "For #12.\n"})
+    real = small.subprocess.run
+
+    def run(argv, *args, **kwargs):
+        if "grep" in argv:
+            raise subprocess.TimeoutExpired(argv, 120)
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(small.subprocess, "run", run)
+    code, out, err = _run(monkeypatch, capsys, root, "#12")
+    assert code == 1 and out == ""
+    assert err.startswith("workflow graph cites: git grep failed") and err.count("\n") == 1, err
