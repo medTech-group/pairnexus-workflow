@@ -415,7 +415,7 @@ def _evidence_words(waived: list, profile: Profile) -> str:
             f"as `workflow evidence` prints it ({as_printed}), before the `merge-check` below."
         )
     after = (
-        "When it ends, post its report on the PR as `workflow evidence` prints it, even if your head has moved "
+        "When it ends, post its report on the PR as `workflow evidence` prints it, even if the PR's head has moved "
         f"since: {as_printed}. If the PR has "
         "merged, or been left to the owner, by then, your notes say \"Evidence for `<sha>` to come on #<PR>\" and you "
         "stay to post it (`build-ticket` §6 step 5)."

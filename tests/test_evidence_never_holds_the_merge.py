@@ -133,10 +133,14 @@ NOTHING_ABOVE = (
 
 def _posted_as_printed(merging, first):
     assert (
-        "When it ends, post its report on the PR as `workflow evidence` prints it, even if your head has moved "
+        "When it ends, post its report on the PR as `workflow evidence` prints it, even if the PR's head has moved "
         f"since: {NOTHING_ABOVE}."
     ) in first
     assert "naming the head it covers" not in merging
+    # The head that moves on is the PR's, as §6 step 2's "its head" (step 5: it can
+    # differ from the head that merged). "Your head" is the checkout's, and the run
+    # stops when that moves, so it has no report to post.
+    assert "your head has moved" not in merging
 
 
 def _bullets(merging):
