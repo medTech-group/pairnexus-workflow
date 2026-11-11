@@ -329,6 +329,25 @@ def test_allow_dirty_on_a_dirty_tree_names_what_changed_mid_run_too(tmp_path, mo
     assert _kept(root, sha) == []
 
 
+def test_allow_dirty_on_a_tree_changed_while_the_suites_are_chosen_gives_the_dirty_marker(tmp_path, monkeypatch, capsys):
+    # Clean when the command starts, changed before the suites start: the
+    # marker follows the run's own look as the suites start.
+    root = _repo(tmp_path)
+    sha = _sha(root)
+
+    def select(prof, r, ref, base_sha):
+        (root / "notes.txt").write_text("v2\n")
+        return evidence.Selection(None)
+
+    monkeypatch.setattr(evidence, "select", select)
+    assert _evidence(monkeypatch, root, "--allow-dirty", "--base-ref", "HEAD") == 0
+    out = capsys.readouterr().out
+    assert _headline(out) == evidence.headline(sha, True, dirty=True)
+    assert "notes.txt" in next(l for l in out.splitlines() if "--allow-dirty" in l)
+    # Kept apart. (`<sha>/` holds the base's run here: the base ref is the head.)
+    assert _dirty_kept(root, sha) == ["unit-000.json", "unit-001.json", "unit-002.json"]
+
+
 def test_allow_dirty_on_a_clean_tree_left_alone_is_a_clean_report(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path)
     sha = _sha(root)
