@@ -336,12 +336,11 @@ STATUS_GIT = ["ls-files -z", "check-ref-format refs/remotes/origin/main", "rev-p
               "show refs/remotes/origin/main:.claude/workflow/profile.toml"]
 
 
-def _git_project(tmp_path, **kw):
-    """A checkout with a commit and `origin/main`, so status reads the base's
-    profile; `kw` go to `_project`."""
+def _git_project(tmp_path):
+    """A checkout with a commit and `origin/main`, so status reads the base's profile."""
     import shutil
 
-    root, git = _project(tmp_path, **kw), shutil.which("git")
+    root, git = _project(tmp_path), shutil.which("git")
     ident = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
     for args in (["init", "-q"], ["add", "-A"], [*ident, "commit", "-qm", "x"], ["update-ref", "refs/remotes/origin/main", "HEAD"]):
         subprocess.run([git, *args], cwd=root, check=True, capture_output=True)
@@ -367,31 +366,20 @@ def _counting_git(bin_dir, tmp_path, hang_at=None, delay=0):
     return log, marker
 
 
-def _ctrl_c_at_git_call(tmp_path, command, call, last, delay=0, group=False, own=False, **kw):
-    """Run `workflow <command>` once to log its `git` calls, then again with
-    the fake `git` hanging at `call` (its `last` match, else its first), press
-    Ctrl-C (to the whole group with `group`) and check the run stops quietly
-    with nothing left running. `own` runs the project's own copy of the CLI,
-    as `_run` does; `kw` go to `_project`. Status's and doctor's tests share it."""
-    root = _git_project(tmp_path, **kw)
+def _ctrl_c_at_status_git_call(tmp_path, call, delay=0):
+    root = _git_project(tmp_path)
     path = _bin(tmp_path, gh=False)
-    cli_ = root / ".claude/workflow/bin/workflow.py" if own else CLI
-    env = _env(tmp_path, root, path)
     log, _ = _counting_git(path, tmp_path)
-    p = subprocess.run([sys.executable, "-B", str(cli_), command], cwd=root, env=env, capture_output=True, text=True)
+    p = _run(tmp_path, root, path=path)
     assert p.returncode == 0, p.stderr
     calls = log.read_text().splitlines()
     assert call in calls, calls
-    at = len(calls) - calls[::-1].index(call) if last else calls.index(call) + 1
-    _, marker = _counting_git(path, tmp_path, hang_at=at, delay=delay)
-    code, err = _ctrl_c(cli_, [command], root, env, marker, group=group)
-    assert code == 130 and f"workflow {command}: stopped" in err and "Traceback" not in err, err
-    assert _gone(int(marker.read_text())), f"what {command}'s git started is still running"
-
-
-def _ctrl_c_at_status_git_call(tmp_path, call, delay=0):
     # Status's own call comes after doctor's: the last one with these arguments.
-    _ctrl_c_at_git_call(tmp_path, "status", call, last=True, delay=delay)
+    at = len(calls) - calls[::-1].index(call)
+    _, marker = _counting_git(path, tmp_path, hang_at=at, delay=delay)
+    code, err = _ctrl_c(CLI, ["status"], root, _env(tmp_path, root, path), marker)
+    assert code == 130 and "workflow status: stopped" in err and "Traceback" not in err, err
+    assert _gone(int(marker.read_text())), "what status's git started is still running"
 
 
 @pytest.mark.parametrize("call", STATUS_GIT)
