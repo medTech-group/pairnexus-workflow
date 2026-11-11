@@ -11,7 +11,7 @@ import sys
 import pytest
 
 import fake_gh
-from changelog_notes import since_0110
+from changelog_notes import entry, since_0110
 from conftest import KIT
 from test_doctor import CLI, _bin, _ctrl_c, _fake, _gone, _lines, _prof, _project, _report
 from workflow import cli, profile, vendor
@@ -44,14 +44,14 @@ def _env(tmp_path, root, path=None, env=None):
     return e
 
 
-def _run(tmp_path, root, *args, path=None, env=None, own=False):
-    """`workflow status` from the kit's source, or with `own` from the
-    project's own copy of the CLI, as a session runs it. Only the hooks line
-    needs the copy (doctor compares the hooks only from it), and the source
-    starts in half the time, since its bytecode is already cached: CI runs
-    the whole suite close to its time limit."""
+def _run(tmp_path, root, *args, path=None, env=None, own=False, command="status"):
+    """`workflow <command>` (status, unless given) from the kit's source, or
+    with `own` from the project's own copy of the CLI, as a session runs it.
+    Only the hooks line needs the copy (doctor compares the hooks only from
+    it), and the source starts in half the time, since its bytecode is
+    already cached: CI runs the whole suite close to its time limit."""
     cli_ = root / ".claude/workflow/bin/workflow.py" if own else CLI
-    return subprocess.run([sys.executable, "-B", str(cli_), "status", *args], cwd=root if root.is_dir() else tmp_path,
+    return subprocess.run([sys.executable, "-B", str(cli_), command, *args], cwd=root if root.is_dir() else tmp_path,
                           env=_env(tmp_path, root, path, env), capture_output=True, text=True)
 
 
@@ -336,11 +336,12 @@ STATUS_GIT = ["ls-files -z", "check-ref-format refs/remotes/origin/main", "rev-p
               "show refs/remotes/origin/main:.claude/workflow/profile.toml"]
 
 
-def _git_project(tmp_path):
-    """A checkout with a commit and `origin/main`, so status reads the base's profile."""
+def _git_project(tmp_path, **kw):
+    """A checkout with a commit and `origin/main`, so status reads the base's
+    profile; `kw` go to `_project`."""
     import shutil
 
-    root, git = _project(tmp_path), shutil.which("git")
+    root, git = _project(tmp_path, **kw), shutil.which("git")
     ident = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
     for args in (["init", "-q"], ["add", "-A"], [*ident, "commit", "-qm", "x"], ["update-ref", "refs/remotes/origin/main", "HEAD"]):
         subprocess.run([git, *args], cwd=root, check=True, capture_output=True)
@@ -366,25 +367,30 @@ def _counting_git(bin_dir, tmp_path, hang_at=None, delay=0):
     return log, marker
 
 
-def _ctrl_c_at_status_git_call(tmp_path, call, delay=0):
-    root = _git_project(tmp_path)
+def _ctrl_c_at_git_call(tmp_path, call, command="status", last=True, delay=0, group=False, **kw):
+    """Run `workflow <command>` once to log its `git` calls, then again with
+    the fake `git` hanging at `call` (its `last` match, else its first), press
+    Ctrl-C (to the whole process group with `group`) and check the run stops
+    quietly with nothing left running. `kw` go to `_project`. Status's tests
+    and doctor's (#717) share it."""
+    root = _git_project(tmp_path, **kw)
     path = _bin(tmp_path, gh=False)
     log, _ = _counting_git(path, tmp_path)
-    p = _run(tmp_path, root, path=path)
+    p = _run(tmp_path, root, path=path, command=command)
     assert p.returncode == 0, p.stderr
     calls = log.read_text().splitlines()
     assert call in calls, calls
-    # Status's own call comes after doctor's: the last one with these arguments.
-    at = len(calls) - calls[::-1].index(call)
+    at = len(calls) - calls[::-1].index(call) if last else calls.index(call) + 1
     _, marker = _counting_git(path, tmp_path, hang_at=at, delay=delay)
-    code, err = _ctrl_c(CLI, ["status"], root, _env(tmp_path, root, path), marker)
-    assert code == 130 and "workflow status: stopped" in err and "Traceback" not in err, err
-    assert _gone(int(marker.read_text())), "what status's git started is still running"
+    code, err = _ctrl_c(CLI, [command], root, _env(tmp_path, root, path), marker, group=group)
+    assert code == 130 and f"workflow {command}: stopped" in err and "Traceback" not in err, err
+    assert _gone(int(marker.read_text())), f"what {command}'s git started is still running"
 
 
+# Status's own call comes after doctor's: the last one with these arguments.
 @pytest.mark.parametrize("call", STATUS_GIT)
 def test_ctrl_c_during_status_own_git_calls_stops_quietly_with_nothing_left_running(tmp_path, call):
-    _ctrl_c_at_status_git_call(tmp_path, call)
+    _ctrl_c_at_git_call(tmp_path, call)
 
 
 # A slow `git` (a busy machine) at each of status's own timeouts: the test's
@@ -392,7 +398,7 @@ def test_ctrl_c_during_status_own_git_calls_stops_quietly_with_nothing_left_runn
 # still finds the command running.
 @pytest.mark.parametrize("call, delay", [(STATUS_GIT[0], 21), (STATUS_GIT[1], 6)])
 def test_a_slow_status_git_call_is_still_running_when_the_ctrl_c_comes(tmp_path, call, delay):
-    _ctrl_c_at_status_git_call(tmp_path, call, delay)
+    _ctrl_c_at_git_call(tmp_path, call, delay=delay)
 
 
 def test_the_changelog_notes_status_own_git_calls_ctrl_c():
@@ -403,8 +409,6 @@ def test_the_changelog_notes_status_own_git_calls_ctrl_c():
 def test_status_s_quiet_stop_is_never_claimed_for_a_ctrl_c_anywhere():
     # A Ctrl-C while the CLI is still loading its modules gives a traceback
     # (#697), so neither the note nor `cmd_status` says "anywhere".
-    notes = since_0110()
-    start = notes.index("(#689).")
-    entry = notes[start:notes.index("\n\n**", start)]
-    assert "- **For projects updating:**" in entry and "Ctrl-C anywhere" not in entry
+    note = entry("#689")
+    assert "- **For projects updating:**" in note and "Ctrl-C anywhere" not in note
     assert "anywhere" not in cli.cmd_status.__doc__
