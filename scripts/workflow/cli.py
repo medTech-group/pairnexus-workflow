@@ -126,7 +126,7 @@ def _read(path: str) -> str:
         if path == "-":
             if sys.stdin is None:
                 raise InputUnreadable(None, "it is closed", "-")
-            return sys.stdin.read()
+            return sys.stdin.buffer.read().decode("utf-8")  # its bytes: Python's own reading lets bad ones through
         return Path(path).read_text(encoding="utf-8")
     except InputUnreadable:
         raise

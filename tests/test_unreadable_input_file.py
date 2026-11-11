@@ -74,6 +74,32 @@ def test_briefing_verify_refuses_closed_standard_input(tmp_path):
     assert line == "workflow: can't read standard input (-): it is closed"
 
 
+def test_briefing_verify_refuses_standard_input_that_isnt_utf8(tmp_path):
+    p = subprocess.run(
+        [sys.executable, str(CLI), "briefing", "verify", "--file", "-"],
+        input=b"Hi \xff there\n\nBriefing 0123456789ab\n",
+        capture_output=True,
+        cwd=tmp_path,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+    )
+    line = _one_refusal(subprocess.CompletedProcess(p.args, p.returncode, p.stdout.decode(), p.stderr.decode()))
+    assert line == "workflow: can't read standard input (-): it isn't UTF-8 text"
+
+
+def test_standard_input_in_utf8_still_verifies(tmp_path):
+    from workflow import render
+
+    p = subprocess.run(
+        [sys.executable, str(CLI), "briefing", "verify", "--file", "-"],
+        input=render.seal("You are one ticket session, café.").encode("utf-8"),
+        capture_output=True,
+        cwd=tmp_path,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+    )
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.decode().strip().endswith(" intact")
+
+
 def test_the_closed_standard_input_check_is_reads_alone():
     """`_read` checks for a closed standard input, and `_json_inputs` reads
     through it with no copy of that check (the architecture's "Reuse, not
