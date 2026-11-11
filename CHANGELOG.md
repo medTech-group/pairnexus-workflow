@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**A test for a Ctrl-C at each of the profile check's `git` calls in `workflow doctor`** (#717).
+
+- **The test:** a fake `git` hangs at the profile check's `check-ref-format`, `rev-parse`, `show` and (for a profile that names code) `ls-files -z`, a slow `ls-files` among them; a Ctrl-C, to doctor's pid or to its whole process group, gives `workflow doctor: stopped`, exit 130, with nothing that `git` started left running.
+- **One harness:** status's Ctrl-C tests and doctor's share it, `_ctrl_c_at_git_call` in `tests/test_status_local_gaps.py`; `_run` there takes the command to run, and `_ctrl_c` in `tests/test_doctor.py` can send the SIGINT to the whole group.
+- **For projects updating:** nothing to do.
+
 **A background evidence run watches the working tree after each shard** (#703, split out of #671). A tracked file changed while the suites ran (an edit beside the run, a merge of the base left in conflict, a file a suite or `[repair]` command rewrites) still gave a report naming the commit as tested, and the shard was kept under `<sha>/` for a later run to reuse.
 
 - **`workflow evidence`:** after each shard, and after the `[repair]` commands, it looks at every tracked or staged file in the checkout, the whole checkout even when the project is a folder in it (its index entries and file stats, so an edit undone or a rewrite with the same bytes still shows), and inside each checked-out submodule its HEAD and tracked files too. A change makes the run a dirty one: it finishes, keeps that shard and every later one under `<sha>-dirty` (never reused, so a later run on the clean commit runs them again), and its report carries the dirty marker, which `merge-check` never counts, naming the files. With `--allow-dirty`, an untracked file that appears, inside a submodule too, does the same, and so does a file created or removed in a folder that isn't ignored (an empty one or one holding only ignored files too), an ignored file too, even one gone again by the next look, and the marker follows the run's own look rather than `git status`. Read-only git commands beside the run (`status`, `diff`, `fetch`) change nothing. Untracked files that appear without `--allow-dirty` are still left be (#704).
@@ -12,7 +18,7 @@
 
 - **`workflow doctor`:** the profile check's `git` calls (the base's profile read: `check-ref-format`, `rev-parse`, `show`; and, for a profile that names code, its tracked files: `ls-files -z`) already run through the shared runner since #689, so a Ctrl-C at any of them kills what that `git` started.
 - **The seam:** `_code_warnings`' `ls-files` gave a literal 20 seconds; it is now `profile.CODE_FILES_TIMEOUT`, which the Ctrl-C tests' launcher raises along with the profile's other `git` timeouts.
-- **Still to come:** the doctor-level Ctrl-C test at each of those calls is #717's.
+- **The test:** the doctor-level Ctrl-C test at each of those calls came with #717.
 - **For projects updating:** nothing to do.
 
 **A Ctrl-C during `workflow status`'s own `git` calls stops it quietly, with nothing left running** (#689).

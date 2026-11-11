@@ -1159,7 +1159,7 @@ runpy.run_path(script, run_name="__main__")
 """
 
 
-def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
+def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0, group=False):
     """Start `workflow <args>` from `script`, press Ctrl-C once the fake it
     runs has written its pid to `marker`, and give (exit code, stderr).
 
@@ -1171,7 +1171,9 @@ def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
     before a slow fake had started, so the run's timeouts (doctor's, and
     status's and the profile's `git` calls', #689) are set far past the
     wait. The pid must be there before the signal: a fake that never wrote it
-    fails here, saying so, rather than being sent a Ctrl-C blind."""
+    fails here, saying so, rather than being sent a Ctrl-C blind. With
+    `group`, the run starts a process group of its own and the SIGINT goes
+    to that whole group, as a terminal's Ctrl-C sends it (#717)."""
     import signal
     import time
 
@@ -1180,12 +1182,21 @@ def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
 
     p = subprocess.Popen([sys.executable, "-B", "-c", _LAUNCH, str(script), str(run_timeout), *args], cwd=root, env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL), start_new_session=group)
     end = time.monotonic() + wait
     while not written() and p.poll() is None and time.monotonic() < end:
         time.sleep(0.05)
     started = written()
-    p.send_signal(signal.SIGINT)  # also stops a run whose fake never wrote its pid
+    # Also stops a run whose fake never wrote its pid. A run that has ended
+    # is sent nothing: its group is gone, and its pid may be another's.
+    if group:
+        if p.poll() is None:
+            try:
+                os.killpg(p.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+    else:
+        p.send_signal(signal.SIGINT)
     try:
         _, err = p.communicate(timeout=20)
     except subprocess.TimeoutExpired:
@@ -1323,6 +1334,18 @@ def test_a_ctrl_c_test_fails_clearly_when_the_fake_never_wrote_its_pid(tmp_path)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(path)}
     with pytest.raises(AssertionError, match="never wrote its pid"):
         _ctrl_c(root / ".claude/workflow/bin/workflow.py", ["doctor"], root, env, marker, wait=1)
+
+
+@pytest.mark.parametrize("group", [False, True], ids=["pid", "group"])
+def test_a_ctrl_c_test_fails_clearly_when_the_run_ended_before_the_fake_wrote_its_pid(tmp_path, group):
+    # Doctor finishes on its own and nothing writes the pid: the run has ended
+    # (and been reaped) by the time the Ctrl-C would go, so none is sent, to
+    # its pid or its group, and the failure says why (#717).
+    root = _project(tmp_path)
+    marker = tmp_path / "child.pid"
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "HOME": str(tmp_path), "PATH": str(_bin(tmp_path, claude=None))}
+    with pytest.raises(AssertionError, match="never wrote its pid"):
+        _ctrl_c(root / ".claude/workflow/bin/workflow.py", ["doctor"], root, env, marker, group=group)
 
 
 def test_a_missing_folder_under_home_is_shown_from_home(tmp_path):
