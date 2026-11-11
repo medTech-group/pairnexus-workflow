@@ -9,6 +9,7 @@ second one has the merge queue merge a head behind its base: the merge commit's
 first parent holds a pull request merged ahead of it, so the restart compares
 with where that parent and the head meet (`git merge-base`)."""
 
+import subprocess
 from pathlib import Path
 
 from conftest import git
@@ -149,6 +150,29 @@ def test_build_ticket_restarts_after_the_merge_against_the_base_it_merged_onto()
     # pull requests merged after or ahead of this one.
     assert "holds this pull request and any merged after it" in rule
     assert "`<merge>^1` any merged ahead of it in the queue" in rule
+
+
+def test_in_a_shallow_clone_where_the_head_left_the_base_is_out_of_reach_until_it_is_unshallowed(tmp_path):
+    # Round 2 of #726: a clone of the branch at depth 1 has no history above the
+    # fork point, so `git merge-base` prints nothing and exits 1; `$(…)` then
+    # leaves `--base-ref` with no value, or an empty one when quoted.
+    origin, merge = _merged_behind(tmp_path / "origin")
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", "--depth", "1", "--single-branch", "--branch", "pr", f"file://{origin}", str(clone))
+    git(clone, "fetch", "-q", "origin", "main")
+    found = subprocess.run(["git", "merge-base", "HEAD", f"{merge}^1"], cwd=clone, capture_output=True, text=True)
+    assert (found.returncode, found.stdout) == (1, "")
+    git(clone, "fetch", "-q", "--unshallow")
+    assert git(clone, "merge-base", "HEAD", f"{merge}^1").strip() == git(origin, "merge-base", "pr", f"{merge}^1").strip()
+
+
+def test_build_ticket_never_restarts_with_an_empty_base_ref():
+    rule = _restart()
+    assert (
+        "If `git merge-base` prints nothing (a shallow clone, whose history stops short of where your head left the base), "
+        "`git fetch --unshallow` and run it again"
+    ) in rule
+    assert "never pass an empty `--base-ref`" in rule
 
 
 def test_a_stop_the_restart_covers_is_no_reason_for_no_report():
