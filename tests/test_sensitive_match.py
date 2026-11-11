@@ -84,3 +84,13 @@ def test_the_helper_is_listed_on_its_architecture_page():
     assert "Covers: scripts/workflow/profile.py" in page
     helpers = page.split("\n## Helpers\n", 1)[1].split("\n## ", 1)[0]
     assert re.search(r"^- `holds_sensitive`: in `profile\.py`", helpers, re.M)
+
+
+def test_each_helper_has_its_own_item_on_the_page():
+    # The overview's "Writing a page": one list item for each helper.
+    page = (SCRIPTS.parent.parent / "docs" / "architecture" / "scripts--workflow.md").read_text(encoding="utf-8")
+    helpers = page.split("\n## Helpers\n", 1)[1].split("\n## ", 1)[0]
+    items = {m.group(1): m.group(0) for m in re.finditer(r"^- `(\w+)`:.*$", helpers, re.M)}
+    assert "sensitive_match" in items
+    assert items["sensitive_match"].startswith("- `sensitive_match`: in `profile.py`")
+    assert "sensitive_match" not in items["holds_sensitive"]
