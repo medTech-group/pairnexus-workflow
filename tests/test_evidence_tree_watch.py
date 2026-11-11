@@ -237,7 +237,8 @@ def test_a_submodule_left_alone_keeps_the_run_clean(tmp_path, monkeypatch, capsy
 # ---------- 3. read-only git commands beside the run ----------
 
 
-def test_read_only_git_commands_beside_the_run_keep_it_clean(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("args", [[], ["--allow-dirty"]], ids=["plain", "allow-dirty"])
+def test_read_only_git_commands_beside_the_run_keep_it_clean(tmp_path, monkeypatch, capsys, args):
     root = _repo(tmp_path / "proj")
     remote = tmp_path / "remote.git"
     git(tmp_path, "clone", "-q", "--bare", str(root), str(remote))
@@ -249,7 +250,7 @@ def test_read_only_git_commands_beside_the_run_keep_it_clean(tmp_path, monkeypat
         "git status >/dev/null && git status --porcelain >/dev/null && git diff >/dev/null && git diff HEAD >/dev/null"
         " && git fetch -q origin && git update-index --refresh >/dev/null && git log -1 >/dev/null && cat notes.txt >/dev/null",
     )
-    assert _evidence(monkeypatch, root) == 0
+    assert _evidence(monkeypatch, root, *args) == 0
     assert _headline(capsys.readouterr().out) == evidence.headline(sha, True)
     assert _kept(root, sha) == ["unit-000.json", "unit-001.json", "unit-002.json"]
     assert _dirty_kept(root, sha) == []
@@ -292,6 +293,29 @@ def test_allow_dirty_on_a_clean_tree_that_changes_mid_run_gives_the_dirty_marker
     assert f"`{cmd.split('> ')[1]}`" in next(l for l in out.splitlines() if "while it ran" in l)
 
 
+def test_allow_dirty_on_a_clean_tree_sees_an_untracked_file_that_came_and_went(tmp_path, monkeypatch, capsys):
+    # Like a tracked edit undone within a shard: the file is gone by the next look, its folder still shows it.
+    root = _repo(tmp_path)
+    sha = _sha(root)
+    _act(root, "tests/test_1.txt", "echo pass > tests/test_9.txt && rm tests/test_9.txt")
+    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
+    out = capsys.readouterr().out
+    assert _headline(out) == evidence.headline(sha, True, dirty=True)
+    assert "`tests/`" in next(l for l in out.splitlines() if "while it ran" in l)
+    assert _kept(root, sha) == ["unit-000.json"]
+    assert _dirty_kept(root, sha) == ["unit-001.json", "unit-002.json"]
+
+
+def test_allow_dirty_on_a_clean_tree_with_no_workflow_folder_yet_is_a_clean_report(tmp_path, monkeypatch, capsys):
+    # The run's own store, made in the project's folder, isn't a change beside it.
+    root = _repo(tmp_path)
+    shutil.rmtree(root / ".workflow")
+    sha = _sha(root)
+    assert _evidence(monkeypatch, root, "--allow-dirty") == 0
+    assert _headline(capsys.readouterr().out) == evidence.headline(sha, True)
+    assert _kept(root, sha) == ["unit-000.json", "unit-001.json", "unit-002.json"]
+
+
 def test_allow_dirty_on_a_dirty_tree_names_what_changed_mid_run_too(tmp_path, monkeypatch, capsys):
     root = _repo(tmp_path)
     (root / "notes.txt").write_text("dirty\n")
@@ -330,4 +354,4 @@ def test_the_tree_state_is_a_helper_listed_in_its_page(tmp_path):
     assert evidence.tree_changes(before, after) == ["lib/lib.txt"]
     (root / "x.txt").write_text("x")
     assert evidence.tree_changes(after, evidence.tree_state(root)) == []
-    assert evidence.tree_changes(after, evidence.tree_state(root), untracked=True) == ["x.txt"]
+    assert evidence.tree_changes(after, evidence.tree_state(root), untracked=True) == ["./", "x.txt"]  # and the folder it appeared in

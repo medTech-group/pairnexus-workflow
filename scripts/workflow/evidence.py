@@ -168,11 +168,13 @@ def _code(name: str) -> str:
 
 
 class TreeState(NamedTuple):
-    """What `tree_state` saw: each tracked or staged path's mark, and the
-    untracked paths that aren't ignored."""
+    """What `tree_state` saw: each tracked or staged path's mark, the
+    untracked paths that aren't ignored, and the mark of each folder holding a
+    tracked path."""
 
     files: dict[str, tuple]
     untracked: frozenset[str]
+    folders: dict[str, tuple]
 
 
 def _git_out(root: Path, *args: str) -> bytes:
@@ -182,7 +184,9 @@ def _git_out(root: Path, *args: str) -> bytes:
     return p.stdout
 
 
-def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[str], skip: str = "") -> None:
+def _tracked(
+    root: Path, prefix: str, files: dict[str, tuple], untracked: set[str], folders: dict[str, tuple], skip: str = ""
+) -> None:
     """Each tracked or staged path under `root`, named with `prefix`: its index
     entries (a path in conflict has one a stage) and its file's `lstat`, times in
     nanoseconds and the change time included, so a write is seen even when it
@@ -190,7 +194,11 @@ def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[st
     aren't ignored. A checked-out submodule (a gitlink) is its HEAD and, the
     same way, its own tracked and untracked paths, so an edit, a commit or a
     new file inside it is seen too; its folder's own `lstat` isn't kept, since
-    files appearing in it change that. Paths under `skip` are left out."""
+    files appearing in it change that. In `folders`, each folder holding a
+    tracked or staged path, `root` included, named with a trailing `/` (the
+    checkout's top `./`): its `lstat`, which a file created or removed in it
+    changes, an ignored one too, even when it's gone again. Paths under `skip`
+    are left out."""
     names = os.fsdecode(_git_out(root, "ls-files", "--others", "--exclude-standard", "-z")).split("\0")
     untracked.update(prefix + n for n in names if n and not (skip and n.startswith(skip)))
     entries: dict[str, list[str]] = {}
@@ -203,7 +211,7 @@ def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[st
         if any(i.startswith("160000 ") for i in info) and (path / ".git").exists():
             head = subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=path, capture_output=True, text=True)
             files[prefix + name] = (tuple(info), "submodule", head.stdout.strip())
-            _tracked(path, f"{prefix}{name}/", files, untracked)
+            _tracked(path, f"{prefix}{name}/", files, untracked, folders)
             continue
         try:
             st = os.lstat(path)
@@ -211,6 +219,13 @@ def _tracked(root: Path, prefix: str, files: dict[str, tuple], untracked: set[st
         except OSError:
             mark = None
         files[prefix + name] = (tuple(info), mark)
+    for rel in {p.as_posix() for name in entries for p in Path(name).parents}:
+        try:
+            st = os.lstat(root / rel)
+            mark = (st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+        except OSError:
+            mark = None
+        folders[prefix + rel + "/" if rel != "." else prefix or "./"] = mark
 
 
 def tree_state(root: Path) -> TreeState:
@@ -225,17 +240,20 @@ def tree_state(root: Path) -> TreeState:
     own = (Path(os.path.relpath(root.resolve(), top.resolve())) / ".workflow").as_posix() + "/"
     files: dict[str, tuple] = {}
     untracked: set[str] = set()
-    _tracked(top, "", files, untracked, skip=own)
-    return TreeState(files, frozenset(untracked))
+    folders: dict[str, tuple] = {}
+    _tracked(top, "", files, untracked, folders, skip=own)
+    return TreeState(files, frozenset(untracked), folders)
 
 
 def tree_changes(before: TreeState, after: TreeState, untracked: bool = False) -> list[str]:
     """The paths whose mark differs between two looks, sorted; with untracked,
-    the untracked files that appeared too."""
+    the untracked files that appeared too, and the folders a file was created
+    or removed in (`_tracked`), so a file that came and went is seen."""
     keys = before.files.keys() | after.files.keys()
     changed = {k for k in keys if before.files.get(k) != after.files.get(k)}
     if untracked:
         changed |= after.untracked - before.untracked
+        changed |= {k for k in before.folders.keys() | after.folders.keys() if before.folders.get(k) != after.folders.get(k)}
     return sorted(changed)
 
 
@@ -425,7 +443,9 @@ def collect(
     a later run on the commit runs it again. A tracked or staged path changed
     since the last look (`tree_state`: an edit, even one undone, a removal, a
     merge left in conflict, inside a submodule too), or with allow_dirty an
-    untracked file that appeared, makes it a dirty run: the run can't tell its
+    untracked file that appeared or a file created or removed in a folder
+    holding a tracked path (an ignored one too, even one gone again), makes it
+    a dirty run: the run can't tell its
     suites' or repair's own writes from a change beside it, so it goes on, and
     from that shard on keeps its results under <sha>-dirty, never reused, with
     the paths in `watch.changed` (the report's dirty marker). The repair's
@@ -433,7 +453,10 @@ def collect(
     allow_dirty are left be (#704). `watch.started` gets the paths dirty as the
     suites start, with allow_dirty.
     """
-    # The first look comes before the clean check, so nothing slips in between.
+    # The first look comes before the clean check, so nothing slips in between,
+    # and after the store's folder is made, so making it isn't a change beside the run.
+    if clean_check:
+        (store or root / EVIDENCE_DIR).mkdir(parents=True, exist_ok=True)
     state = tree_state(root) if clean_check else None
     if allow_dirty:
         dirty = dirty_paths(root)
