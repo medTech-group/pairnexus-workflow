@@ -318,6 +318,29 @@ def test_a_conflict_that_goes_on_keeps_its_line_only_until_the_sessions_next_not
     assert "a conflict that goes on keeps its line until the session's next note or conflict note" in notes
 
 
+def test_the_conductors_line_is_never_posted_for_a_needs_human_ticket():
+    # Correctness pass 1 of #686: `owner` mode, ready note R with the to-come
+    # line; the session posts its conflict note, merges and pushes, its new
+    # head's check stays red after three fixes, and it labels the ticket
+    # `needs-human` and ends. The "Labelled `needs-human`" row archives it, but
+    # with the report still to come from the conflict note, the next check-in
+    # that gave a `conflict` posted "its session kept to merge it in".
+    h = _hold_conflict()
+    assert "For a session whose report is still to come, at each check-in" not in h
+    assert (
+        "For a session whose report is still to come and whose ticket isn't labelled `needs-human`, at each "
+        "check-in whose `WF merge-check` on its open pull request gives a `conflict` reason"
+    ) in h
+    # the "Labelled `needs-human`" row isn't among those the hold keeps from
+    # archiving, and the session's stop at `needs-human` ends it as usual
+    hold = _hold()
+    assert "the rows that archive a session (the **Merged** row," in hold
+    assert "Labelled `needs-human`" not in hold[:hold.index("never archive one whose report is still to come")]
+    assert "Stopping at `needs-human` (§5) ends it as usual." in _conflict()
+    notes = since_0110()
+    assert "The conductor posts that line, for a ticket not labelled `needs-human`, at the first check-in" in notes
+
+
 def test_the_conductors_line_holds_while_a_conflict_note_is_up():
     # round 3 of #686 (Correctness), check-ins every 20 minutes: ready note R
     # at T0; a first conflict, the session's conflict note C1 at T0+20, its
@@ -339,8 +362,9 @@ def test_the_conductors_line_holds_while_a_conflict_note_is_up():
         "`created_at`)."
     ) in h
     # the other side: the line is posted only for a session whose report is
-    # still to come, and from it the limit is still 180 minutes
-    assert "For a session whose report is still to come, at each check-in" in h
+    # still to come (and whose ticket isn't labelled `needs-human`), and from
+    # it the limit is still 180 minutes
+    assert "For a session whose report is still to come and whose ticket isn't labelled `needs-human`, at each" in h
     assert "**The limit:** 180 minutes since that note was posted (its `created_at`)" in _hold()
 
 
