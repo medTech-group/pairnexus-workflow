@@ -5,7 +5,6 @@
 **A Ctrl-C during `workflow status`'s own `git` calls stops it quietly, with nothing left running** (#689).
 
 - **`workflow status`:** a Ctrl-C while it ran one of its own `git` calls (the tracked files it counts, and the base's profile it reads for who writes code) gave a `KeyboardInterrupt` traceback (exit -2) rather than `workflow status: stopped` (exit 130), and left whatever that `git` had started running. A Ctrl-C once `workflow status` has started its checks is now the quiet stop, and those `git` calls run as doctor's commands do: in a session of their own, whose whole process group is killed when the wait ends (a timeout or a Ctrl-C).
-- **Ended by a closed terminal or a runner** (SIGHUP or SIGTERM to its process group), `workflow status`, doctor and the guard's read of who writes code now kill what their own commands started before they end, since those commands run in a session of their own that the signal doesn't reach.
 - **One runner:** doctor's way of running a command (#684) moved into `scripts/workflow/proc.py`, which doctor, `workflow status` and the profile's `git` reads now share, so the profile check's `git` calls (#690) go through it too.
 - **A tracked file whose name isn't UTF-8** (`café.txt` saved in an old encoding) stopped `workflow status` with a `UnicodeDecodeError` traceback; it is now counted with the project's own files.
 - **For projects updating:** nothing to do.

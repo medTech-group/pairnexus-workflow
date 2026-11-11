@@ -6,7 +6,7 @@ Interface: `run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and
 
 ## Helpers
 
-- `proc.run`: runs one of the kit's own short commands with no shell and no input, in a session of its own, and kills its whole process group whenever the caller stops waiting (a timeout, a Ctrl-C, or a SIGTERM or SIGHUP left to its default, which then ends the caller as before), holding any of these that comes while it starts; a Ctrl-C still reaches the caller as `KeyboardInterrupt`. Doctor's `_run`, `workflow status`'s `git` call and the profile's `_git` use it.
+- `proc.run`: runs one of the kit's own short commands with no shell and no input, in a session of its own, and kills its whole process group whenever the caller stops waiting (a timeout, a Ctrl-C), holding a Ctrl-C that comes while it starts; a Ctrl-C still reaches the caller as `KeyboardInterrupt`. Doctor's `_run`, `workflow status`'s `git` call and the profile's `_git` use it.
 - `proc.output`: what a command printed, as UTF-8 with other bytes replaced, when it exited 0; else None.
 
 ## Decisions

@@ -13,7 +13,7 @@ import pytest
 import fake_gh
 from changelog_notes import since_0110
 from conftest import KIT
-from test_doctor import _LAUNCH, CLI, _bin, _ctrl_c, _fake, _gone, _lines, _prof, _project, _report
+from test_doctor import CLI, _bin, _ctrl_c, _fake, _gone, _lines, _prof, _project, _report
 from workflow import cli, profile, vendor
 
 # What `status --json` gave before #62; the report only adds to it.
@@ -366,9 +366,7 @@ def _counting_git(bin_dir, tmp_path, hang_at=None, delay=0):
     return log, marker
 
 
-def _status_hanging_at(tmp_path, call, delay=0):
-    """A checkout and a PATH whose `git` hangs at status's own `call`: give
-    the checkout, the PATH and the marker."""
+def _ctrl_c_at_status_git_call(tmp_path, call, delay=0):
     root = _git_project(tmp_path)
     path = _bin(tmp_path, gh=False)
     log, _ = _counting_git(path, tmp_path)
@@ -379,11 +377,6 @@ def _status_hanging_at(tmp_path, call, delay=0):
     # Status's own call comes after doctor's: the last one with these arguments.
     at = len(calls) - calls[::-1].index(call)
     _, marker = _counting_git(path, tmp_path, hang_at=at, delay=delay)
-    return root, path, marker
-
-
-def _ctrl_c_at_status_git_call(tmp_path, call, delay=0):
-    root, path, marker = _status_hanging_at(tmp_path, call, delay)
     code, err = _ctrl_c(CLI, ["status"], root, _env(tmp_path, root, path), marker)
     assert code == 130 and "workflow status: stopped" in err and "Traceback" not in err, err
     assert _gone(int(marker.read_text())), "what status's git started is still running"
@@ -400,100 +393,6 @@ def test_ctrl_c_during_status_own_git_calls_stops_quietly_with_nothing_left_runn
 @pytest.mark.parametrize("call, delay", [(STATUS_GIT[0], 21), (STATUS_GIT[1], 6)])
 def test_a_slow_status_git_call_is_still_running_when_the_ctrl_c_comes(tmp_path, call, delay):
     _ctrl_c_at_status_git_call(tmp_path, call, delay)
-
-
-def _status_in_its_own_group(tmp_path, call, ignore=()):
-    """`workflow status` in a process group of its own, as a terminal or a
-    hook's runner starts it, with the run's timeouts far past the wait (as
-    `_ctrl_c` sets them) and the `ignore` signals ignored; give the process
-    and the marker once its `git` has hung at `call` and written its pid."""
-    import signal
-    import time
-
-    root, path, marker = _status_hanging_at(tmp_path, call)
-
-    def start():
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-        for s in ignore:
-            signal.signal(s, signal.SIG_IGN)
-
-    p = subprocess.Popen([sys.executable, "-B", "-c", _LAUNCH, str(CLI), "600", "status"], cwd=root, env=_env(tmp_path, root, path),
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, preexec_fn=start)
-    end = time.monotonic() + 60
-    while not (marker.exists() and marker.read_text().strip()) and p.poll() is None and time.monotonic() < end:
-        time.sleep(0.05)
-    if not (marker.exists() and marker.read_text().strip()):
-        os.killpg(p.pid, signal.SIGKILL)
-        pytest.fail(f"the fake never wrote its pid (exit {p.wait()}): {p.stderr.read()}")
-    return p, marker
-
-
-# A closed terminal (SIGHUP) or a runner ending a timed-out hook's group
-# (SIGTERM) ends status as before, and kills what its own `git` started.
-@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP"])
-def test_status_ended_by_a_signal_to_its_group_leaves_nothing_running(tmp_path, sig):
-    import signal
-
-    p, marker = _status_in_its_own_group(tmp_path, STATUS_GIT[1])
-    os.killpg(p.pid, getattr(signal, sig))
-    try:
-        p.communicate(timeout=20)
-    finally:
-        if p.poll() is None:
-            os.killpg(p.pid, signal.SIGKILL)
-    assert p.returncode == -getattr(signal, sig)
-    assert _gone(int(marker.read_text())), "what status's git started is still running"
-
-
-def test_an_ignored_hangup_leaves_status_and_its_git_running(tmp_path):
-    import signal
-
-    p, marker = _status_in_its_own_group(tmp_path, STATUS_GIT[1], ignore=(signal.SIGHUP,))
-    os.killpg(p.pid, signal.SIGHUP)
-    child = int(marker.read_text())
-    try:
-        assert not _gone(child, seconds=1) and p.poll() is None
-        os.killpg(p.pid, signal.SIGINT)
-        _, err = p.communicate(timeout=20)
-    finally:
-        if p.poll() is None:
-            os.killpg(p.pid, signal.SIGKILL)
-    assert p.returncode == 130 and "workflow status: stopped" in err, err
-    assert _gone(child)
-
-
-# The runner, given a SIGTERM or SIGHUP inside Popen once the command is
-# running, then carrying on if it isn't ended.
-_SIGNAL_IN_POPEN = """\
-import os, signal, subprocess, sys, time
-sys.path.insert(0, sys.argv[1])
-from workflow import proc
-marker, sig = sys.argv[3], getattr(signal, sys.argv[4])
-real = subprocess.Popen
-def popen(*a, **kw):
-    p = real(*a, **kw)
-    end = time.monotonic() + 60
-    while not (os.path.exists(marker) and open(marker).read().strip()) and time.monotonic() < end:
-        time.sleep(0.05)
-    os.kill(os.getpid(), sig)
-    return p
-subprocess.Popen = popen
-proc.run([sys.argv[2]], timeout=600)
-print("carried on")
-"""
-
-
-@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP"])
-def test_a_signal_while_a_command_starts_is_held_until_its_group_can_be_killed(tmp_path, sig):
-    import shutil
-    import signal
-
-    marker, cmd = tmp_path / "child.pid", tmp_path / "hang"
-    _fake(tmp_path, "hang", f"{shutil.which('sleep')} 30 & echo $! > {marker}; wait")
-    p = subprocess.run([sys.executable, "-B", "-c", _SIGNAL_IN_POPEN, str(KIT / "scripts"), str(cmd), str(marker), sig],
-                       capture_output=True, text=True, timeout=90)
-    assert p.returncode == -getattr(signal, sig) and "carried on" not in p.stdout, (p.returncode, p.stdout, p.stderr)
-    assert _gone(int(marker.read_text())), "what the command started is still running"
 
 
 def test_the_changelog_notes_status_own_git_calls_ctrl_c():
