@@ -86,6 +86,12 @@ def test_build_ticket_restarts_a_run_you_stopped_only_once_your_change_is_made()
     assert "start it again at once" not in rule
 
 
+def test_build_ticket_reposts_the_evidence_to_come_line_for_the_new_head():
+    rule = _restart()
+    assert "When your latest note on the tracking issue says the evidence for the old head is to come (step 5)" in rule
+    assert 'post the line again there for the new one: "Evidence for `<sha>` to come on #<PR>"' in rule
+
+
 def test_build_ticket_restarts_after_the_merge_against_the_base_it_merged_onto():
     rule = _restart()
     assert "until it has merged, `--base-ref origin/<base>`" in rule
