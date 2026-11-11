@@ -1186,18 +1186,6 @@ def cmd_preview(a) -> int:
     return 0
 
 
-def _graph_items(value, what: str, given: str) -> list[dict]:
-    """`graph cites`'s issues or pull requests (`what`), their pages
-    flattened: a list of objects, or a list of pages of them, each with a
-    positive whole `number`. Raises ValueError, its words starting with
-    `given` (`--issues isn't`), for anything else (an error object GitHub
-    gave instead, a string)."""
-    pages = [x if isinstance(x, list) else [x] for x in value] if isinstance(value, list) else None
-    if pages is None or not all(isinstance(i, dict) and fetch_mod._id(i.get("number")) and i["number"] > 0 for p in pages for i in p):
-        raise ValueError(f"{given} a list of {what} as the GitHub API lists them (objects, or pages of them, each with a positive whole number)")
-    return _fetch_items(value)
-
-
 def cmd_graph(a) -> int:
     """`graph cites` (spec #682, #744): each id's citing passages at
     `origin/<base>`, fetched first, and the open issues and pull requests
@@ -1232,12 +1220,7 @@ def cmd_graph(a) -> int:
             return 1
     else:
         issues, prs = _json(a.issues), _json(a.prs)
-    try:
-        issues = _graph_items(issues, "issues", "gh api's issues aren't" if a.fetch else "--issues isn't")
-        prs = _graph_items(prs, "pull requests", "gh api's pull requests aren't" if a.fetch else "--prs isn't")
-    except ValueError as e:
-        print(f"{name}: {e}", file=sys.stderr)
-        return 1 if a.fetch else 2
+    issues, prs = _fetch_items(issues), _fetch_items(prs)
     notes: list[str] = []
     try:
         results, unread = graph_mod.cites(root, prof.base_branch, ids, issues, prs, repo=prof.repo,
