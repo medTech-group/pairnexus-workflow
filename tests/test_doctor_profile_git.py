@@ -9,8 +9,8 @@ tracked files (`ls-files -z`)."""
 import pytest
 
 from changelog_notes import since_0110
-from test_doctor import _bin, _ctrl_c, _gone, _prof
-from test_status_local_gaps import _counting_git, _env, _git_project
+from test_doctor import _prof
+from test_status_local_gaps import _ctrl_c_at_git_call
 
 # The profile check's `git` calls, in the order doctor makes them.
 PROFILE_GIT = ["check-ref-format refs/remotes/origin/main", "rev-parse --verify --quiet refs/remotes/origin/main^{commit}",
@@ -19,30 +19,9 @@ PROFILE_GIT = ["check-ref-format refs/remotes/origin/main", "rev-parse --verify 
 CODE = _prof('experience = "new"\nruleset = true\n', '[guard]\ncode_writers = "any"\ncode_paths = ["src/**"]\n')
 
 
-def _doctor_calls(tmp_path, root, path):
-    """The `git` calls a whole doctor run makes, in order, with the real `git` behind the fake."""
-    import subprocess
-    import sys
-
-    log, _ = _counting_git(path, tmp_path)
-    cli = root / ".claude/workflow/bin/workflow.py"
-    p = subprocess.run([sys.executable, "-B", str(cli), "doctor", "--json"], cwd=root, env=_env(tmp_path, root, path),
-                       capture_output=True, text=True)
-    assert p.returncode == 0, p.stderr
-    return log.read_text().splitlines()
-
-
 def _ctrl_c_at_profile_git_call(tmp_path, call, delay=0, group=False):
-    root = _git_project(tmp_path, profile=CODE)
-    path = _bin(tmp_path, gh=False)
-    calls = _doctor_calls(tmp_path, root, path)
-    assert call in calls, calls
     # The profile check's own call: the first with these arguments.
-    _, marker = _counting_git(path, tmp_path, hang_at=calls.index(call) + 1, delay=delay)
-    code, err = _ctrl_c(root / ".claude/workflow/bin/workflow.py", ["doctor"], root, _env(tmp_path, root, path), marker,
-                        group=group)
-    assert code == 130 and "workflow doctor: stopped" in err and "Traceback" not in err, err
-    assert _gone(int(marker.read_text())), "what the profile check's git started is still running"
+    _ctrl_c_at_git_call(tmp_path, "doctor", call, last=False, delay=delay, group=group, own=True, profile=CODE)
 
 
 # The SIGINT sent to doctor alone, and to its whole process group, as a
