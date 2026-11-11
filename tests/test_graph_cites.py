@@ -533,3 +533,18 @@ def test_it_uses_the_shared_issue_helpers_not_copies_of_them():
     for copy in ("def _items(", "def _number(", "def _open(", "def _plural(", "other.casefold() == repo.casefold()"):
         assert copy not in src, copy
     assert "_fetch_items(" in inspect.getsource(cli.cmd_graph)
+
+
+def test_it_uses_the_shared_constants_not_copies_of_them():
+    """The lock's path is `vendor.LOCK`, the run's label `estimate.RUN_LABEL`,
+    the owner task's labels `issues.OWNER_TASK_LABELS` and the fence
+    `issues._FENCE`: graph.py spells none of them out."""
+    import inspect
+
+    from workflow import estimate, graph, issues, vendor
+
+    src = inspect.getsource(graph)
+    for copy in ('".claude/workflow/lock.json"', '"workflow:run"', '"owner-task"', '"ready-for-human"', "_FENCE = "):
+        assert copy not in src, copy
+    assert graph.LOCK == vendor.LOCK.as_posix() and graph.RUN_LABEL == estimate.RUN_LABEL
+    assert graph.NOT_TICKET_LABELS == issues.OWNER_TASK_LABELS | {issues.RESEARCH_LABEL}

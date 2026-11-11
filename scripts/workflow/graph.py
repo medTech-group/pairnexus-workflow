@@ -33,20 +33,22 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from . import doctor as doctor_mod
+from . import estimate as estimate_mod
 from . import issues as issues_mod
 from . import presets as presets_mod
 from . import research as research_mod
 from . import small as small_mod
 from . import state as state_mod
 from . import status as status_mod
+from . import vendor as vendor_mod
 
 SENSITIVE = "[left out: sensitive]"
 RESEARCH_DIR = "docs/research/"
-LOCK = ".claude/workflow/lock.json"
+LOCK = vendor_mod.LOCK.as_posix()
 STYLE_SUFFIXES = (".css", ".scss")
-RUN_LABEL = "workflow:run"
+RUN_LABEL = estimate_mod.RUN_LABEL
 CLAIM_LABEL = issues_mod.CLAIM_LABEL
-NOT_TICKET_LABELS = {"owner-task", "ready-for-human", issues_mod.RESEARCH_LABEL}
+NOT_TICKET_LABELS = issues_mod.OWNER_TASK_LABELS | {issues_mod.RESEARCH_LABEL}
 GREP_CHUNK = 400  # paths given to one `git grep`, well inside any command line's limit
 
 
@@ -255,7 +257,6 @@ def _sentence_at(where: dict[int, list[tuple[int, int]]], line: int, col: int) -
 # ---------- `## Replaces` ----------
 
 
-_FENCE = re.compile(r"[ \t]{0,3}(`{3,}|~{3,})")
 _ANY_HEADING = re.compile(r"[ \t]{0,3}#{1,6}(?:[ \t]|$)")
 _REPLACES = re.compile(r"[ \t]{0,3}#{1,6}[ \t]+Replaces[ \t]*:?[ \t]*#*[ \t]*$", re.I)
 
@@ -267,7 +268,7 @@ def replaces_lines(lines: list[str]) -> set[int]:
     fence: str | None = None
     inside, out = False, set()
     for i, line in enumerate(lines):
-        m = _FENCE.match(line)
+        m = issues_mod._FENCE.match(line)
         if fence:
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not line[m.end():].strip():
                 fence = None
