@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**A background evidence run never reports a tree it didn't test** (#671, split out of #663). Since #663 a ticket session runs `workflow evidence` in the background while it goes on acting on `merge-check`, and the run checks the working tree only at its start: an edit, or a merge of the base, while shards still ran could end in a report naming the head for a tree that wasn't it. And a shard was saved as passing before the "HEAD moved" check, so a later run on the same commit reused it.
+
+- **`workflow evidence`:** after each shard it checks the head before keeping the shard's result. A moved head stops the run with nothing of that shard kept, so the next run on the commit runs it again. It still checks the working tree only at its start.
+- **`build-ticket` §6 step 2:** while the background run goes, the session stops it before changing its checkout (an edit, merging the base in, a pull, a new untracked file), since the run catches only its head moving. Tests: `tests/test_evidence_tree.py`.
+
 **Ctrl-C while doctor starts a command no longer leaves it running, and the Ctrl-C tests no longer fail on a busy machine** (#684).
 
 - **`workflow doctor` and `workflow status`:** a Ctrl-C that came while doctor was starting `claude --version`, `python3`, `gh` or `git` (inside `subprocess.Popen`, once the command was already running) left that command, and whatever it had started, running after the quiet stop. The Ctrl-C is now held until the command has started, then stops it as any other Ctrl-C does: its whole process group is killed, and the run ends with exit 130.
