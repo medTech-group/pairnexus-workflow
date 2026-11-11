@@ -1023,7 +1023,7 @@ def _ctrl_c_in_popen(tmp_path, monkeypatch, body=None, wait=60.0):
     import signal
     import time
 
-    from workflow import doctor
+    from workflow import doctor, proc
 
     path = _bin(tmp_path, python=None, claude=None)
     marker = tmp_path / "child.pid"
@@ -1043,7 +1043,7 @@ def _ctrl_c_in_popen(tmp_path, monkeypatch, body=None, wait=60.0):
         os.kill(os.getpid(), signal.SIGINT)
         return p
 
-    monkeypatch.setattr(doctor.subprocess, "Popen", popen)
+    monkeypatch.setattr(proc.subprocess, "Popen", popen)
     i = _inputs(tmp_path, environ={"PATH": str(path), "HOME": str(tmp_path)})
     # Ctrl-C raises KeyboardInterrupt here even where pytest was started ignoring it.
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -1102,7 +1102,7 @@ def test_a_command_that_cant_be_started_gives_back_the_ctrl_c_handler(tmp_path):
 def test_a_ctrl_c_while_a_start_fails_stops_the_run(tmp_path, monkeypatch):
     import signal
 
-    from workflow import doctor
+    from workflow import doctor, proc
 
     real = subprocess.Popen
 
@@ -1110,7 +1110,7 @@ def test_a_ctrl_c_while_a_start_fails_stops_the_run(tmp_path, monkeypatch):
         os.kill(os.getpid(), signal.SIGINT)
         return real(*a, **kw)  # raises OSError: the interpreter isn't there
 
-    monkeypatch.setattr(doctor.subprocess, "Popen", popen)
+    monkeypatch.setattr(proc.subprocess, "Popen", popen)
     i = _unstartable(tmp_path)
     # Ctrl-C raises KeyboardInterrupt here even where pytest was started ignoring it.
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -1144,15 +1144,16 @@ def _gone(pid, seconds=5.0):
 
 
 # Runs the CLI's entry point as `python3 <script> <args>` does, with doctor's
-# RUN_TIMEOUT set first: the seam a Ctrl-C test controls across the process.
+# RUN_TIMEOUT, the profile's GIT_TIMEOUT and status's OWN_FILES_TIMEOUT set
+# first: the seams a Ctrl-C test controls across the process.
 _LAUNCH = """\
 import runpy, sys
 from pathlib import Path
 script, timeout = sys.argv[1], float(sys.argv[2])
 sys.argv = [script, *sys.argv[3:]]
 sys.path.insert(0, str(Path(script).resolve().parent))
-from workflow import doctor
-doctor.RUN_TIMEOUT = timeout
+from workflow import doctor, profile, status
+doctor.RUN_TIMEOUT = profile.GIT_TIMEOUT = status.OWN_FILES_TIMEOUT = timeout
 runpy.run_path(script, run_name="__main__")
 """
 
@@ -1166,7 +1167,8 @@ def _ctrl_c(script, args, root, env, marker, wait=60.0, run_timeout=600.0):
     background) passed that on, and Python then never raises
     KeyboardInterrupt, so the child gets SIGINT's default back, as a terminal
     gives it; and doctor's own 10-second timeout could end the run by itself
-    before a slow fake had started, so the run's timeout is set far past the
+    before a slow fake had started, so the run's timeouts (doctor's, and
+    status's and the profile's `git` calls', #689) are set far past the
     wait. The pid must be there before the signal: a fake that never wrote it
     fails here, saying so, rather than being sent a Ctrl-C blind."""
     import signal

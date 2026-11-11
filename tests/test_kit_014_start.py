@@ -135,6 +135,15 @@ def test_code_named_like_boilerplate_is_the_project_s_own(repo, name):
     assert status.snapshot(repo, True).own_files == 1
 
 
+def test_a_file_whose_name_isnt_utf8_is_counted_as_the_project_s_own(repo):
+    # #689: git's names are read with other bytes replaced, so such a name is
+    # counted rather than stopping `workflow status` with a traceback.
+    (repo / os.fsdecode(b"caf\xe9.txt")).write_text("x")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "code")
+    assert status.snapshot(repo, True).own_files == 1
+
+
 def test_status_text_outside_a_git_checkout(tmp_path):
     st = status.snapshot(tmp_path, False)
     assert st.own_files == -1 and not st.brand_new and "Project: unknown (not a git checkout)" in status.text(st)

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**A Ctrl-C during `workflow status`'s own `git` calls stops it quietly, with nothing left running** (#689).
+
+- **`workflow status`:** a Ctrl-C while it ran one of its own `git` calls (the tracked files it counts, and the base's profile it reads for who writes code) gave a `KeyboardInterrupt` traceback (exit -2) rather than `workflow status: stopped` (exit 130), and left whatever that `git` had started running. A Ctrl-C once `workflow status` has started its checks is now the quiet stop, and those `git` calls run as doctor's commands do: in a session of their own, whose whole process group is killed when the wait ends (a timeout or a Ctrl-C).
+- **One runner:** doctor's way of running a command (#684) moved into `scripts/workflow/proc.py`, which doctor, `workflow status` and the profile's `git` reads now share, so the profile check's `git` calls (#690) go through it too.
+- **A tracked file whose name isn't UTF-8** (`café.txt` saved in an old encoding) stopped `workflow status` with a `UnicodeDecodeError` traceback; it is now counted with the project's own files.
+- **For projects updating:** nothing to do.
+
 **A background evidence run never reports a tree it didn't test** (#671, split out of #663). Since #663 a ticket session runs `workflow evidence` in the background while it goes on acting on `merge-check`, and the run checks the working tree only at its start: an edit, or a merge of the base, while shards still ran could end in a report naming the head for a tree that wasn't it. And a shard was saved as passing before the "HEAD moved" check, so a later run on the same commit reused it.
 
 - **`workflow evidence`:** after each shard it checks the head before keeping the shard's result. A moved head stops the run with nothing of that shard kept, so the next run on the commit runs it again. It still checks the working tree only at its start.
