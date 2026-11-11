@@ -190,7 +190,8 @@ def _ends(text: str, start: int) -> list[int]:
     """Where sentences end in `text` after `start`: just past each end mark."""
     out = []
     for m in _END.finditer(text, start):
-        if text[m.start()] == "." and _NOT_AN_END.search(text, 0, m.start()):
+        # Only the three characters before the mark: `\b` still sees the one before them.
+        if text[m.start()] == "." and _NOT_AN_END.search(text, max(0, m.start() - 3), m.start()):
             continue
         out.append(m.end())
     return out

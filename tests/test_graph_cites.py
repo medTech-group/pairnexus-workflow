@@ -224,6 +224,16 @@ def test_a_quoted_line_is_read_without_its_quote_marks(root, monkeypatch, capsys
     assert _passages(_one(monkeypatch, capsys, root, "#12")) == [("docs/a.md", 1, "Quoted for #12, over two lines.")]
 
 
+
+def test_a_long_line_of_sentences_is_read_in_linear_time(root, monkeypatch, capsys):
+    import time
+
+    _push(root, {"docs/a.json": '{"docs": "' + "Ab. " * 20000 + 'Cans. See #77. "}\n'})
+    started = time.monotonic()
+    got = _one(monkeypatch, capsys, root, "#77")
+    assert time.monotonic() - started < 3
+    assert _passages(got) == [("docs/a.json", 1, "See #77.")]
+
 # ---------- what is left out ----------
 
 
