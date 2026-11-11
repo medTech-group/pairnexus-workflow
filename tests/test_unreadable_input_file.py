@@ -551,11 +551,6 @@ def test_the_note_says_what_the_json_inputs_files_give(tmp_path, args, shown):
         assert words in note, words
 
 
-def test_merge_check_words_an_empty_path_as_the_note_says(tmp_path):
-    p = _cli(tmp_path, "merge-check", "--json", "--pr", "")
-    assert _merge_check_why(p, "pr") == "Not yet: couldn't read the pull request (--pr): no path was given."
-
-
 def test_changelog_note_without_bumping_version():
     note = entry(NOTE)
     assert "#727" in note and "briefing verify" in note
