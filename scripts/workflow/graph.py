@@ -34,6 +34,7 @@ from pathlib import Path, PurePosixPath
 
 from . import doctor as doctor_mod
 from . import estimate as estimate_mod
+from . import evidence as evidence_mod
 from . import issues as issues_mod
 from . import presets as presets_mod
 from . import research as research_mod
@@ -545,8 +546,10 @@ def cites(root: Path, base: str, ids: list[Id], issues: list[dict], prs: list[di
         passages = []
         for path in sorted(texts):
             style = path.casefold().endswith(STYLE_SUFFIXES)
+            # A name that isn't UTF-8 (or holds a control character) is shown as git quotes it, so any output can print it.
+            shown = path if path.isprintable() else evidence_mod._git_quoted(path)
             for line, sentence in cited(texts[path], id_, pattern, repo, style=style):
-                passages.append({"file": path, "line": line, "sentence": _shown(sentence, sensitive), "spec_unsure": False})
+                passages.append({"file": shown, "line": line, "sentence": _shown(sentence, sensitive), "spec_unsure": False})
         listed = []
         for b in bodies:
             for _, sentence in cited(b.text, id_, pattern, repo, skip=b.skip):

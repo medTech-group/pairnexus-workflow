@@ -278,6 +278,19 @@ def test_binary_files_are_left_out(root, monkeypatch, capsys):
     assert [p["file"] for p in _one(monkeypatch, capsys, root, "#12")["passages"]] == ["docs/a.md"]
 
 
+
+def test_a_file_name_that_isnt_utf8_is_shown_as_git_quotes_it(root, monkeypatch, capsys):
+    import os
+
+    (root / "odd").mkdir()
+    (root / os.fsdecode(b"odd/caf\xe9.md")).write_text("It cites #5.\n")
+    _push(root, {"docs/a.md": "For #5.\n"})
+    code, out, err = _run(monkeypatch, capsys, root, "#5")
+    assert code == 0
+    out.encode("utf-8")  # a strict UTF-8 standard output prints it
+    assert '  "odd/caf\\351.md"' in out.splitlines()
+    assert [p["file"] for p in _one(monkeypatch, capsys, root, "#5")["passages"]] == ["docs/a.md", '"odd/caf\\351.md"']
+
 def test_it_reads_the_base_branch_at_origin_not_the_working_tree(root, monkeypatch, capsys):
     _push(root, {"docs/a.md": "For #12.\n"})
     _write(root, "docs/b.md", "Also #12.\n")
