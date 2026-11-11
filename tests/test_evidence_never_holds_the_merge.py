@@ -121,6 +121,24 @@ def _merging(tmp_path, mode="auto-merge", waived=()):
     return _section(text, "### Merging", "### Rules")
 
 
+# #675: as build-ticket §6 step 2 says it. `merge-check` counts a report only by
+# its first line, the headline naming the head, so a line put above it
+# ("Evidence for `<sha>`") hides the report. "naming the head it covers" read as
+# asking for such a line.
+NOTHING_ABOVE = (
+    "its first line names the head it covers, and `merge-check` counts a report only by that line, so never put "
+    "a line above it"
+)
+
+
+def _posted_as_printed(merging, first):
+    assert (
+        "When it ends, post its report on the PR as `workflow evidence` prints it, even if your head has moved "
+        f"since: {NOTHING_ABOVE}."
+    ) in first
+    assert "naming the head it covers" not in merging
+
+
 def _bullets(merging):
     return [l for l in merging.splitlines() if l.startswith("- ")]
 
@@ -133,7 +151,7 @@ def test_no_waived_check_briefs_the_evidence_as_never_holding_the_merge(tmp_path
     assert f"`{EVIDENCE}`" in first and "--all" not in first
     assert "tracked background task" in first and "never with `&` inside a shell call" in first
     assert "without waiting for it" in first
-    assert "post its report on the PR, naming the head it covers." in first
+    _posted_as_printed(merging, first)
     # nothing reads as "post the evidence" before merge-check
     assert "Post the evidence from" not in merging
 
@@ -152,6 +170,7 @@ def test_a_charter_waiver_briefs_the_report_first_only_on_a_waiver_used(tmp_path
     assert "without waiting for it" in first
     assert "once it notes a waiver used, post the report before you merge, arm auto-merge or queue" in first
     assert "post its report on the PR before the `merge-check` below" not in first
+    _posted_as_printed(merging, first)
 
 
 def test_ci_none_briefs_the_report_first(tmp_path):
@@ -161,9 +180,18 @@ def test_ci_none_briefs_the_report_first(tmp_path):
     assert first.startswith("- **The evidence comes first:** the profile says `ci.none`"), first
     assert f"`{EVIDENCE} --all`" in first
     assert "never holds the merge" not in merging
+    # the report merge-check counts here comes first, so the same words hold
+    assert f"post its report on the PR as `workflow evidence` prints it ({NOTHING_ABOVE}), before the `merge-check` below." in first
+    assert "naming the head it covers" not in merging
 
 
 def test_changelog_notes_663_without_bumping_version():
     notes = since_0110()
     assert "(#663" in notes
     assert "never holds the merge" in notes
+
+
+def test_changelog_notes_675_without_bumping_version():
+    notes = since_0110()
+    assert "(#675" in notes
+    assert "as `workflow evidence` prints it" in notes

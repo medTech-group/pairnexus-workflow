@@ -402,16 +402,23 @@ def _evidence_words(waived: list, profile: Profile) -> str:
     merge. A check the charter waives is used only once it fails killed, so
     there the run starts with `--all` and holds the merge only from then."""
     cmd = f"python3 .claude/workflow/bin/workflow.py evidence --base-ref origin/{profile.base_branch}"
+    # As `build-ticket` §6 step 2 says it (#675): `merge-check` counts a report only by
+    # its first line, so a head named above it hides the report.
+    as_printed = (
+        "its first line names the head it covers, and `merge-check` counts a report only by that line, so never put "
+        "a line above it"
+    )
     if profile.ci_none:
         return (
             "**The evidence comes first:** the profile says `ci.none`, so the report is the proof, and `merge-check` "
             f"counts it (flow §4, item 2). Once the review is clean, run `{cmd} --all` and post its report on the PR "
-            "before the `merge-check` below."
+            f"as `workflow evidence` prints it ({as_printed}), before the `merge-check` below."
         )
     after = (
-        "When it ends, post its report on the PR, naming the head it covers. If the PR has merged, or been left to "
-        "the owner, by then, your notes say \"Evidence for `<sha>` to come on #<PR>\" and you stay to post it (`build-ticket` "
-        "§6 step 5)."
+        "When it ends, post its report on the PR as `workflow evidence` prints it, even if your head has moved "
+        f"since: {as_printed}. If the PR has "
+        "merged, or been left to the owner, by then, your notes say \"Evidence for `<sha>` to come on #<PR>\" and you "
+        "stay to post it (`build-ticket` §6 step 5)."
     )
     if waived:
         return (

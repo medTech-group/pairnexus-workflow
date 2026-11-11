@@ -306,7 +306,7 @@ def test_the_briefing_says_to_stay_for_the_report(tmp_path, waived):
     )
     assert p.returncode == 0, p.stderr
     first = next(l for l in _section((tmp_path / "briefing.md").read_text(), "### Merging", "### Rules").splitlines() if l.startswith("- "))
-    assert "When it ends, post its report on the PR, naming the head it covers." in first
+    assert "When it ends, post its report on the PR as `workflow evidence` prints it" in first
     # the line in full, as `build-ticket` §6 step 5 and the conductor's hold give it:
     # a note with the line cut short leaves nothing to come, and the session is archived
     assert (
