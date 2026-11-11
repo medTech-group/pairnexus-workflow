@@ -172,7 +172,7 @@ def test_the_watch_leaves_the_evidence_stay_to_section_6_step_5():
     assert "wins over" not in p
     six = _section(BUILD_TICKET.read_text(), "## 6. Post the evidence and merge", "## 7. End each turn")
     stay = _flat(_section(six, "**Then stay**", "**A conflict while you stay.**"))
-    assert "Leave your checkout as it is (no pull, no edit: the run stops if your head moves), except to merge the base in for a conflict (below)" in stay
+    assert "Leave your checkout as it is (no pull, no edit: the run stops if your head moves), except as \"A conflict while you stay\" says (below)" in stay
     assert stay.rstrip(" -").endswith("Then end `done`.")
     conflict = _flat(_section(six, "**A conflict while you stay.**", "6. **The claim label.**"))
     assert "as §4's \"Every waiting check-in watches the base\" does" in conflict

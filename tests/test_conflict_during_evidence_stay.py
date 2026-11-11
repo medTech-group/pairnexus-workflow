@@ -84,12 +84,18 @@ def test_the_watch_no_longer_stops_at_the_stay():
     ) in p
 
 
-def test_the_stay_leaves_the_checkout_as_it_is_except_for_a_conflict():
+def test_the_stay_leaves_the_checkout_as_it_is_except_as_the_conflict_bullet_says():
+    # round 1 of #686: an exception for the merge of the base alone forbade the
+    # fixes the conflict bullet's next `WF merge-check` can ask for (a red
+    # check, a Correctness pass's findings)
     stay = _stay()
+    assert "except to merge the base in for a conflict" not in stay
     assert (
-        "Leave your checkout as it is (no pull, no edit: the run stops if your head moves), except to merge the "
-        "base in for a conflict (below), schedule a check-in, and end the turn `waiting`."
+        "Leave your checkout as it is (no pull, no edit: the run stops if your head moves), except as \"A conflict "
+        "while you stay\" says (below), schedule a check-in, and end the turn `waiting`."
     ) in stay
+    # the bullet it points at is the one that acts on the next `WF merge-check`, as step 3 says
+    assert "act on the next `WF merge-check` as step 3 says" in _conflict()
 
 
 def test_a_conflict_while_you_stay_merges_the_base_in_as_section_4_says():
