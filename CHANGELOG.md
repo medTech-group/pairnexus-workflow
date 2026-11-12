@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**`workflow status` refuses an `--issues` or `--prs` file that isn't JSON, or isn't a list, in one line** (#757, found in the review of #744's pull request). Given a file that wasn't JSON (`{not json`, or an empty file), `workflow status --issues F --prs G` printed a `JSONDecodeError` traceback; given GitHub's error object (`{"message": "Bad credentials", ...}`) as `--issues`, a `TypeError` one.
+
+- **One line now,** on standard error, exit 1, as for a file it can't read (#736): `` workflow: can't read `<path>`: <why> ``, where `<why>` is the reason doctor gives for JSON it can't read (`it isn't valid JSON (<the decode error>, line N)`, `it is empty`, `it is nested too deeply to read`, or `it can't be read (<the error>)` for a number too long to read), or `` workflow: can't read `<path>`: it isn't a list of issues (it is <what it is>) `` (`pull requests` for `--prs`), naming GitHub's message when the file is an object holding one (`it is a JSON object, GitHub's message "Bad credentials"`). A list is taken when each of its entries is an object with a whole-number `number`.
+- **Pages too:** `gh api --paginate --slurp`'s pages of issues or pull requests are flattened, as `--fetch` reads them, where they ended in a traceback. A byte order mark at the start is read past.
+- **Only `status`:** the other commands reading such a file through `_json` (`ready`, `charter`, `state`, `render`, `graph cites`) are unchanged; #731 asks for them, and #763 and #765 for `graph cites`.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_status_issues_file.py`.
+
 **One shared helper for the sensitive-data match** (#756, found in the review of #744's pull request). `workflow graph cites` (#744) left out a sentence matching the profile's `[sensitive].patterns` with its own `re.search` loop over them, a copy of the guard's. Both now call `holds_sensitive(text, patterns)` in `scripts/workflow/profile.py`, beside the profile's `sensitive_patterns`; the guard's two refusals that name the pattern matched (a command's posts, and a GitHub tool's text) use its sibling `sensitive_match`, which gives the first pattern found. What is refused, and what `workflow graph` leaves out, is unchanged.
 
 - **For projects updating:** nothing to do. Tests: `tests/test_sensitive_match.py`.
