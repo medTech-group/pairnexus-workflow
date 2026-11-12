@@ -574,10 +574,14 @@ def test_permissions_on_standard_input_already_read_by_prs_say_so(project, capsy
 
 
 def test_a_pull_request_numbered_true_is_no_pull_request(project, capsys, tmp_path, monkeypatch):
-    owner_can_write(tmp_path, monkeypatch)
-    (project / "issues.json").write_text(json.dumps([ticket(section="## Parent\n\n#1")]))
-    (project / "prs.json").write_text(json.dumps([{"number": True, "state": "open", "body": ""}]))
-    assert cli.main(["ready", "--issues", str(project / "issues.json"), "--prs", str(project / "prs.json"), "--json"]) == 0
+    """Through `--fetch`: a `--prs` file holding one is refused before this
+    note is read (#779, `test_ready_issues_file.py`)."""
+    routes = {
+        "repos/acme/demo/issues": fake_gh.pages([ticket(section="## Parent\n\n#1")]),
+        "repos/acme/demo/pulls": fake_gh.pages([{"number": True, "state": "open", "body": ""}]),
+    }
+    owner_can_write(tmp_path, monkeypatch, routes)
+    assert cli.main(["ready", "--fetch", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["ready"][0]["notes"] == ["spec #1: couldn't read its reviews (#1 isn't in the issue list)"]
 
 

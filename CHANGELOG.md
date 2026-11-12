@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**`workflow ready` reads its `--issues` and `--prs` files as `workflow status` does** (#779, found in the review of #772's pull request). `workflow ready --issues F --prs G` read both files with `json.loads` alone: given `gh api --paginate --slurp`'s pages of issues (`[[{...}, ...], [...]]`), it ended in `TypeError: list indices must be integers or slices, not str` (in `issues.readiness`); given GitHub's error object (`{"message": "Bad credentials", ...}`), in `TypeError: string indices must be integers, not 'str'` (there too); given a file that wasn't JSON, or an empty one, in a `JSONDecodeError` traceback.
+
+- **Pages now:** `--paginate --slurp`'s pages are flattened, as `--fetch` reads them, so two pages give the same answer as one list. A byte order mark at the start is read past.
+- **One line otherwise,** on standard error, exit 1, through `_issues_file` (#757), as `status` refuses it: `` workflow: can't read `<path>`: <why> ``, where `<why>` is doctor's reason for JSON it can't read (`it isn't valid JSON (…)`, `it is empty`, …) or `` it isn't a list of issues (it is …) `` (`pull requests` for `--prs`). A list is taken when each of its entries is an object with a whole-number `number`, so a `--prs` file holding `{"number": true}`, once read past, is refused too.
+- **Only `ready`'s two files:** `ready --fetch` and `ready --permissions` are unchanged, and so are the other commands reading a file through `_json` (`charter`, `state`, `render`, `graph cites`), which #731 asks for.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_ready_issues_file.py`.
+
 **`workflow doctor` and the conductor's estimate read labels through the one shared reader** (#778, found in the review of #772's pull request). `doctor._label_names` and `estimate._labels` each kept their own copy of the label reading that `issues.labels_of` (#772) does. They differed on two inputs: doctor kept an empty name (`""` or `{"name": ""}`) as a label of its own, which `issues.labels_of` reads past, and the estimate didn't casefold, so a past run labelled `Workflow:Run` wasn't counted, though GitHub matches labels in any case and doctor counted it.
 
 - **One reader now:** `doctor._label_names` is `issues.labels_of`, and `estimate.past_runs` reads through it, so doctor and the estimate keep the same issues as past runs. An empty name is read past in every reader.
