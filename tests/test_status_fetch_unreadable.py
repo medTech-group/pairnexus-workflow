@@ -201,6 +201,24 @@ def test_the_nesting_limit_is_counted_on_what_gh_prints(monkeypatch, capsys, tmp
     assert line == f"workflow: can't read the {what} gave: it is nested too deeply to read" + INSTEAD
 
 
+@pytest.mark.parametrize("slurp", [True, False], ids=["slurp", "old-gh"])
+def test_the_page_by_page_route_refuses_lists_nested_too_deeply_in_one_line(monkeypatch, capsys, tmp_path, slurp):
+    """Where the proxy refuses the next-page link (#568), the pages are read
+    one at a time (`fetch.by_page`): lists nested too deeply still give the
+    one line there. That route's other refusals are #810's."""
+    deep = json.loads(_nested(cli.FETCH_DEPTH))
+    _project(monkeypatch, tmp_path)
+    gh = fake_gh.install(tmp_path, monkeypatch, {
+        "repos/acme/demo/issues": fake_gh.pages(deep, [ISSUE], numeric_refused=True),
+        "repos/acme/demo/pulls": fake_gh.pages([PR]),
+    }, slurp=slurp)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["status", "--fetch"])
+    assert "Traceback" not in capsys.readouterr().err
+    assert e.value.code == "workflow: can't read the issues `gh api repos/acme/demo/issues` gave: it is nested too deeply to read" + INSTEAD
+    assert "repos/acme/demo/issues?state=all&per_page=100&page=1" in gh.paths()
+
+
 def test_a_limit_refuses_lists_nested_deeper():
     with pytest.raises(cli.TooDeep):
         cli._fetch_items([[[[{"number": 1}]]]], deepest=3)

@@ -243,8 +243,11 @@ def _fetch(repo: str, what: str) -> list[dict]:
     read one at a time (`fetch.by_page`). The issues list keeps its pull
     requests: readiness resolves a PR blocker by them. Output that isn't
     JSON, holds a number too long or nests lists too deeply raises
-    `FetchUnreadable` (#788): read as JSON with `doctor._parse_json`, the
-    reader `_issues_file` uses, its pages flattened without recursion.
+    `FetchUnreadable` (#788), with `--slurp` or without: read as JSON with
+    `doctor._parse_json`, the reader `_issues_file` uses, its pages
+    flattened without recursion. Read page by page, only lists nested too
+    deeply that Python's own reader can read raise it; that route's other
+    refusals are #810's.
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 
