@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from changelog_notes import entry
 from workflow import cli
 
 TICKET = {
@@ -146,6 +147,25 @@ def test_a_blocker_whose_pull_request_marker_is_of_the_wrong_type_holds_its_tick
     assert [i["number"] for i in got["ready"]] == []
     merged = {"number": 4, "state": "closed", "pull_request": {"merged_at": "2026-11-01T00:00:00Z"}}
     assert [i["number"] for i in _json(monkeypatch, capsys, tmp_path, [ticket, merged], [])["ready"]] == [1]
+
+
+def test_a_null_pull_request_marker_still_marks_a_pull_request(monkeypatch, capsys, tmp_path):
+    """A null `pull_request` doesn't read as missing, unlike the other fields:
+    the item is still a pull request, as before #770. Named as a blocker, it
+    is one closed without merging; open, it isn't listed to sort."""
+    ticket = {**TICKET, "body": "## Blocked by\n\n#4\n"}
+    blocker = {"number": 4, "title": "Notes list", "state": "closed", "state_reason": "completed", "pull_request": None}
+    assert _json(monkeypatch, capsys, tmp_path, [ticket, blocker], [])["ready"] == []
+    without = {k: v for k, v in blocker.items() if k != "pull_request"}
+    assert [i["number"] for i in _json(monkeypatch, capsys, tmp_path, [ticket, without], [])["ready"]] == [1]
+    item = {"number": 5, "title": "Notes list", "state": "open", "labels": [], "pull_request": None}
+    assert _json(monkeypatch, capsys, tmp_path, [item], [])["to_triage"] == []
+
+
+def test_the_changelog_note_says_a_null_pull_request_still_marks_one():
+    note = entry("#770, found in the review of #757's pull request")
+    assert "A null reads as missing, as before." not in note
+    assert "except a null `pull_request`, which still marks a pull request" in note
 
 
 PR_CASES = [

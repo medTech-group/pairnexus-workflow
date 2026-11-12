@@ -129,7 +129,7 @@ def as_read(item: dict) -> dict:
     `issue_dependencies_summary` whose count isn't a whole number is left out
     whole (its sub-issues unknown); a `pull_request` of the wrong type still
     marks a pull request, read without its details. A null reads as missing,
-    as before."""
+    as before, except a null `pull_request`, which still marks a pull request."""
     out = dict(item)
     for k in _TEXTS:
         if not isinstance(out.get(k), (str, type(None))):
