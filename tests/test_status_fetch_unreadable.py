@@ -17,7 +17,7 @@ import pytest
 
 import fake_gh
 from changelog_notes import entry
-from workflow import charter, cli, state
+from workflow import charter, cli, doctor, posts, state
 
 KIT = Path(__file__).resolve().parents[1]
 ISSUE = {"number": 12, "title": "Add notes", "state": "open", "labels": [], "body": ""}
@@ -162,6 +162,22 @@ def test_fetch_reads_gh_with_doctors_json_reader():
     src = inspect.getsource(cli._fetch)
     assert "doctor_mod._parse_json(" in src
     assert "json.loads" not in src
+
+
+def test_the_docstring_names_the_reader_each_route_gives_the_reason_of(monkeypatch, capsys, tmp_path):
+    """`_fetch`'s docstring names `doctor._parse_json` for `--slurp`'s output
+    and `posts.decode_values` for an old `gh`'s pages, and `not json` on each
+    route is refused with the reason that reader gives."""
+    doc = " ".join(cli._fetch.__doc__.split())
+    assert "read as JSON with `doctor._parse_json`" in doc
+    assert "(an old `gh`'s pages one after another with `posts.decode_values`)" in doc
+    _, why = doctor._parse_json(NOT_JSON)
+    assert _refused(monkeypatch, capsys, tmp_path / "slurp", NOT_JSON).endswith(f": {why}{INSTEAD}")
+    with pytest.raises(posts.CommentsError) as e:
+        posts.decode_values(NOT_JSON)
+    line = _refused(monkeypatch, capsys, tmp_path / "old-gh", NOT_JSON, slurp=False)
+    assert line == f"workflow: can't read the issues `gh api repos/acme/demo/issues` gave: it can't be read ({e.value}){INSTEAD}"
+    assert line.endswith(f"it can't be read (not JSON at line 1, column 1: Expecting value){INSTEAD}")
 
 
 def test_the_pages_are_flattened_without_recursion():
