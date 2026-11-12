@@ -121,24 +121,32 @@ def _whole(v) -> bool:
     return v is None or issues_mod.is_whole(v)
 
 
-def as_read(item: dict) -> dict:
+def as_read(item: dict, by_count: bool = False) -> dict:
     """The issue or pull request as `snapshot` reads it (#770): a copy with each
     field it reads that holds the wrong type left out, so the item reads as it
     would without that field, never a traceback. Labels are left as they are:
     `issues.labels_of`, which `status` reads them through, reads past a label
     of the wrong type (#772). A `sub_issues_summary` or
     `issue_dependencies_summary` whose count isn't a whole number is left out
-    whole (its sub-issues unknown); a `pull_request` of the wrong type still
-    marks a pull request, read without its details. A null reads as missing,
-    as before, except a null `pull_request`, which still marks a pull request."""
+    whole (its sub-issues unknown); with `by_count`, as `workflow ready` reads
+    it (#780), only that count is left out, so a parent whose `total` is a
+    whole number stays a parent (`issues.is_build_ticket` reads `total` alone).
+    A `pull_request` of the wrong type still marks a pull request, read
+    without its details. A null reads as missing, as before, except a null
+    `pull_request`, which still marks a pull request."""
     out = dict(item)
     for k in _TEXTS:
         if not isinstance(out.get(k), (str, type(None))):
             del out[k]
     for k, counts in (("sub_issues_summary", ("total", "completed")), ("issue_dependencies_summary", ("blocked_by",))):
         v = out.get(k)
-        if v is not None and not (isinstance(v, dict) and all(_whole(v.get(c)) for c in counts)):
+        if v is None:
+            continue
+        bad = [c for c in counts if not _whole(v.get(c))] if isinstance(v, dict) else None
+        if bad is None or (bad and not by_count):
             del out[k]
+        elif bad:
+            out[k] = {c: n for c, n in v.items() if c not in bad}
     if not isinstance(out.get("pull_request", {}), (dict, type(None))):
         out["pull_request"] = {}
     head = out.get("head")

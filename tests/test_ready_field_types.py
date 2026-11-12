@@ -125,6 +125,25 @@ def test_an_issue_field_of_the_wrong_type_gives_no_traceback_in_text(monkeypatch
     assert got == _ready(monkeypatch, capsys, tmp_path, _issues(which, dropped, _DROP), [PR])
 
 
+@pytest.mark.parametrize("completed", ["1", 1.5, True, [1]], ids=repr)
+def test_a_parent_whose_completed_count_has_the_wrong_type_stays_a_parent(monkeypatch, capsys, tmp_path, completed):
+    """A summary whose `total` is a whole number keeps it: only the count of
+    the wrong type is left out, so a parent of three sub-issues is never a
+    ticket to start. One whose `total` has the wrong type is still left out
+    whole (`ISSUE_CASES`)."""
+    parent = _issues("ticket", ("sub_issues_summary",), {"total": 3, "completed": completed})
+    without = _issues("ticket", ("sub_issues_summary",), {"total": 3})
+    got = _json(monkeypatch, capsys, tmp_path, parent, [PR])
+    assert got == _json(monkeypatch, capsys, tmp_path, without, [PR])
+    assert 1 not in [v["number"] for v in got["ready"] + got["not_ready"]]
+    assert 1 not in got["start_now"]
+    assert _ready(monkeypatch, capsys, tmp_path, parent, [PR]) == _ready(monkeypatch, capsys, tmp_path, without, [PR])
+    # A `total` of the wrong type reads as no summary at all, as before.
+    loose = _issues("ticket", ("sub_issues_summary",), {"total": "3", "completed": completed})
+    none = _issues("ticket", ("sub_issues_summary",), _DROP)
+    assert _json(monkeypatch, capsys, tmp_path, loose, [PR]) == _json(monkeypatch, capsys, tmp_path, none, [PR])
+
+
 PR_CASES = [
     (("head",), "main", ("head",)),
     (("head", "ref"), 5, ("head", "ref")),
