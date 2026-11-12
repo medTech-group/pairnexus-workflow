@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+import fake_gh
 from changelog_notes import entry
 from workflow import cli
 
@@ -162,6 +163,28 @@ def test_well_typed_fields_are_read_as_before(monkeypatch, capsys, tmp_path):
     assert [v["number"] for v in held["ready"]] == []
     parent = _json(monkeypatch, capsys, tmp_path, _issues("ticket", ("sub_issues_summary", "total"), 3), [PR])
     assert 1 not in [v["number"] for v in parent["ready"] + parent["not_ready"]]
+
+
+def test_fetch_reads_past_a_field_of_the_wrong_type(monkeypatch, capsys, tmp_path):
+    """`--fetch`'s items are read through `status.as_read` too, as the files' are."""
+    _env(monkeypatch, tmp_path)
+    (tmp_path / ".claude/workflow").mkdir(parents=True)
+    (tmp_path / ".claude/workflow/profile.toml").write_text('[project]\nname = "demo"\nrepo = "acme/demo"\n', encoding="utf-8")
+    issue = {"number": 1, "title": "A", "state": 5, "labels": [{"name": "ready-for-agent"}], "body": "Area: a\n\n## Blocked by\n\nNone\n"}
+    pr = {"number": 30, "state": "open", "body": 5}
+
+    def fetched(issues, prs):
+        fake_gh.install(tmp_path, monkeypatch, {"repos/acme/demo/issues": fake_gh.pages(issues), "repos/acme/demo/pulls": fake_gh.pages(prs)})
+        code = cli.main(["ready", "--fetch", "--json"])
+        out = capsys.readouterr()
+        assert "Traceback" not in out.err
+        assert code == 0, out.err
+        return json.loads(out.out)
+
+    got = fetched([issue, copy.deepcopy(CLOSED_BY_PR)], [pr])
+    without = fetched([{k: v for k, v in issue.items() if k != "state"}, copy.deepcopy(CLOSED_BY_PR)], [{k: v for k, v in pr.items() if k != "body"}])
+    assert got == without
+    assert [v["number"] for v in got["ready"]] == [9]
 
 
 def test_the_changelog_has_the_note():
