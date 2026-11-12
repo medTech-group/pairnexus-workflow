@@ -333,15 +333,17 @@ def cmd_ready(a) -> int:
             }
         )
     else:
-        # Each line through `escape_surrogates`: a lone surrogate in a title,
-        # a note or a reason is shown as its escape, never a traceback (#785).
-        esc = issues_mod.escape_surrogates
+        # Each title, area, reason and note through `escape_controls`: a
+        # control character in one is shown as its escape, so each ticket stays
+        # on its own line (#797). Then each line through `escape_surrogates`: a
+        # lone surrogate is shown as its escape, never a traceback (#785).
+        esc, ctl = issues_mod.escape_surrogates, issues_mod.escape_controls
         for v in verdicts:
             mark = "READY" if v.ready else "wait "
-            why = "" if v.ready else " — " + "; ".join(v.reasons)
-            print(esc(f"{mark} #{v.number} [{v.area or '-'}] {v.title}{why}"))
+            why = "" if v.ready else " — " + "; ".join(ctl(r) for r in v.reasons)
+            print(esc(f"{mark} #{v.number} [{ctl(v.area or '-')}] {ctl(v.title)}{why}"))
             for note in v.notes:
-                print(esc(f"      note: {note}"))
+                print(esc(f"      note: {ctl(note)}"))
         print("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
     return 0
 
