@@ -241,10 +241,10 @@ def _fetch(repo: str, what: str) -> list[dict]:
     prints the pages one after another, which are decoded one by one. Where a
     cloud session's proxy refuses the next-page link (#568), the pages are
     read one at a time (`fetch.by_page`). The issues list keeps its pull
-    requests: readiness resolves a PR blocker by them. Output it can't read
-    (not JSON, a number too long, lists nested too deeply) raises
-    `FetchUnreadable` (#788): read as `_issues_file` reads a file's
-    (`doctor._parse_json`), its pages flattened without recursion.
+    requests: readiness resolves a PR blocker by them. Output that isn't
+    JSON, holds a number too long or nests lists too deeply raises
+    `FetchUnreadable` (#788): read as JSON with `doctor._parse_json`, the
+    reader `_issues_file` uses, its pages flattened without recursion.
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 

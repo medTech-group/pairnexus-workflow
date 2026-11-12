@@ -262,3 +262,12 @@ def test_the_changelog_gives_the_nesting_limit_the_code_has():
     note = entry("#788, found in the review of #775's pull request")
     assert f"lists nested more than {cli.FETCH_DEPTH - 1} deep (`gh` prints 2)" in note
     assert f"more than {cli.FETCH_DEPTH} deep" not in note
+
+
+def test_the_note_leaves_other_output_to_812():
+    """The note's refusal covers the three cases the tests above run (not
+    JSON, a number too long, lists nested too deeply); its "Unchanged" bullet
+    leaves other output `gh` gives with exit 0 to #812."""
+    note = entry("#788, found in the review of #775's pull request")
+    unchanged = next(ln for ln in note.splitlines() if ln.startswith("- **Unchanged:**"))
+    assert "#812" in unchanged
