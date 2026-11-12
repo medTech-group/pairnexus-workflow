@@ -317,9 +317,11 @@ def local_gap_lines(st: Status) -> list[str]:
 
 
 def text(st: Status) -> str:
-    """The status as text, for a terminal: a lone surrogate in an issue's or
-    pull request's text (a title, a branch) is shown as its JSON escape,
-    `\\ud800`, since it can't be printed (#774)."""
+    """The status as text, for a terminal: in an issue's or pull request's
+    text (a title, a detail, a branch), a control character is shown as its
+    JSON escape, `\\n` or `\\u001b`, so it can't add a line or reach the
+    terminal as a code (#776), and so is a lone surrogate, `\\ud800`, since it
+    can't be printed (#774)."""
     return issues_mod.escape_surrogates(_text(st))
 
 
@@ -340,13 +342,14 @@ def _text(st: Status) -> str:
     if not st.issues_read:
         lines.append("Issues: not read (pass --fetch, or --issues and --prs files)")
         return "\n".join(lines)
+    esc = issues_mod.escape_controls
     for key, heading in _SECTIONS:
         items = getattr(st, key)
         if not items:
             continue
         lines.append(f"{heading}: {len(items)}")
         for it in items[:8]:
-            lines.append(f"- #{it.number} {it.title}" + (f" [{it.detail}]" if it.detail else ""))
+            lines.append(f"- #{it.number} {esc(it.title)}" + (f" [{esc(it.detail)}]" if it.detail else ""))
         if len(items) > 8:
             lines.append(f"- … and {len(items) - 8} more")
     if st.kit_update_pr:

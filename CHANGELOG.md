@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow status`'s text shows the control characters in a title or branch as escapes** (#776). Hardening of the text output: `workflow status` without `--json` printed each issue's and pull request's title, and each item's detail (a pull request's branch among them), as they were, so a control character in one reached the terminal as it was.
+
+- **Escaped now,** through `issues.escape_controls`: each control character (escape codes' `\x1b` among them), the line and paragraph separators and the bidirectional overrides are written as JSON escapes them (`\n`, `\t`, `\u001b`), so each item stays on its own one line. A lone surrogate is still shown as `\ud800` (#774).
+- **Unchanged:** plain titles and titles outside ASCII (accents, emoji, right-to-left text) print as before, and `--json` is unchanged. `workflow ready`'s text is #797's.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_status_control_chars.py`.
+
 **`workflow status`'s and `workflow protection`'s text escape a character standard output can't take, never a traceback** (#786, found in the review of #774's pull request). `workflow status --issues F --prs G` without `--json` printed its text as it was: when standard output's encoding couldn't take a character in it, the command ended in a traceback, exit 1, with nothing printed. With `PYTHONIOENCODING=cp1252` (what a piped standard output gets on Windows by default) and an issue titled `emoji 😀 ok`, it ended in `UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f600'`; under `ascii` or `latin-1`, the text's own `… and N more` line did the same with plain titles. `workflow protection`'s text (the read-back, `--protect`, `--require-checks`, `--merge-queue`, `--checks-ran`) did the same on a base branch or check name it couldn't take.
 
 - **Escaped now,** through `cli._print_text`: each character the output's encoding can't take is written as Python's backslash escape (`\U0001f600`, `\u2026`, `\xe4`), and the rest as it is, exit 0. A lone surrogate is still shown as `\ud800` (#774).
