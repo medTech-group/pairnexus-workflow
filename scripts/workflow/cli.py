@@ -187,6 +187,23 @@ def _out(obj) -> None:
     print(json.dumps(obj, indent=2) if not isinstance(obj, str) else obj)
 
 
+def _print_text(text: str, file=None) -> None:
+    """Print a command's text with each character the stream's encoding can't
+    take written as Python's backslash escape (`\\U0001f600`, `\\u2026`,
+    `\\xe4`), the rest as it is, so a standard output in cp1252 or ASCII never
+    ends the command in a traceback (#786). A stream that names no encoding
+    takes the text as it is; one whose encoding Python can't round-trip gets
+    it in ASCII, escaped the same way."""
+    stream = sys.stdout if file is None else file
+    encoding = getattr(stream, "encoding", None)
+    if encoding:
+        try:
+            text = text.encode(encoding, "backslashreplace").decode(encoding)
+        except (LookupError, UnicodeError):
+            text = text.encode("ascii", "backslashreplace").decode("ascii")
+    print(text, file=stream)
+
+
 def _fetch(repo: str, what: str) -> list[dict]:
     """Through `gh api` (the GitHub CLI, or Claude Code's built-in client).
 
@@ -434,8 +451,8 @@ def _status(a) -> int:
     if a.json:
         _out({**st.as_dict(), "kit": kit})
     else:
-        print(status_mod.text(st))
-        print(_kit_line(kit))
+        _print_text(status_mod.text(st))
+        _print_text(_kit_line(kit))
     return 0
 
 
@@ -606,7 +623,7 @@ def cmd_protection(a) -> int:
     except protection_mod.ProtectionError as e:
         print(f"workflow protection: {e}", file=sys.stderr)
         return 2
-    print(out)
+    _print_text(out)
     return 0
 
 
