@@ -272,10 +272,11 @@ def _fetch(repo: str, what: str) -> list[dict]:
     pages one after another with `posts.decode_values`), its pages
     flattened without recursion. Read page by page, only lists nested too
     deeply that Python's own reader can read raise it; that route's other
-    refusals are #810's. On every route, a page that isn't a list of objects,
-    or pages of them, raises it too, each page `--slurp` prints in its list
-    among them, with the reason `_issues_file` gives a file (`_not_a_list`,
-    #789).
+    refusals are #810's. On every route, output that isn't a list of
+    objects, or pages of them, raises it too, with the reason
+    `_issues_file` gives a file (`_not_a_list`, #789): `--slurp`'s checked
+    whole, as a file is, and each page an old `gh` prints or read one at a
+    time on its own.
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 
@@ -288,16 +289,15 @@ def _fetch(repo: str, what: str) -> list[dict]:
         except fetch_mod.GhError as e:
             raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
 
-    def items(printed: list, pages: list | None = None) -> list[dict]:
-        """The objects in what `gh` printed (`printed`, each value as it
-        printed it), once its lists nest no deeper than `FETCH_DEPTH` (#788)
-        and then each page in it (`pages`; unless given, each value is one)
-        is a list of objects, or pages of them (#789)."""
+    def items(pages: list) -> list[dict]:
+        """The objects in `pages`, each value as `gh` printed it, once its
+        lists nest no deeper than `FETCH_DEPTH` (#788) and then each value is
+        a list of objects, or pages of them (#789)."""
         try:
-            found = _fetch_items(printed, deepest=FETCH_DEPTH)
+            found = _fetch_items(pages, deepest=FETCH_DEPTH)
         except TooDeep:
             raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
-        for page in printed if pages is None else pages:
+        for page in pages:
             why = _not_a_list(page, "issues" if what == "issues" else "pull requests")
             if why:
                 raise FetchUnreadable(_gave(repo, what), why)
@@ -308,7 +308,7 @@ def _fetch(repo: str, what: str) -> list[dict]:
         value, why = doctor_mod._parse_json(p.stdout if p.stdout.strip() else "[]")  # no output: no pages
         if why:
             raise FetchUnreadable(_gave(repo, what), why)
-        return items([value], value if isinstance(value, list) else [value])  # its pages in one list
+        return items([value])  # its pages in one list, checked whole as `_issues_file` checks a file's
     if fetch_mod.numeric_refused(p, path):
         return items(by_page())
     if "slurp" not in (p.stderr + p.stdout).lower():
