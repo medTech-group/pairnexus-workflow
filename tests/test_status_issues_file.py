@@ -47,18 +47,38 @@ def _refused(monkeypatch, capsys, tmp_path, issues, prs=json.dumps([PR])) -> str
 
 def test_an_issues_file_that_isnt_json_is_refused_in_one_line(monkeypatch, capsys, tmp_path):
     line = _refused(monkeypatch, capsys, tmp_path, "{not json")
-    assert line == "workflow: can't read `issues.json`: it isn't JSON (Expecting property name enclosed in double quotes at line 1, column 2)"
+    assert line == "workflow: can't read `issues.json`: it isn't valid JSON (Expecting property name enclosed in double quotes, line 1)"
 
 
 @pytest.mark.parametrize("text", ["", "\n  \n"])
 def test_an_empty_issues_file_is_refused_as_empty(monkeypatch, capsys, tmp_path, text):
     line = _refused(monkeypatch, capsys, tmp_path, text)
-    assert line == "workflow: can't read `issues.json`: it isn't JSON (it is empty)"
+    assert line == "workflow: can't read `issues.json`: it is empty"
 
 
 def test_a_prs_file_that_isnt_json_is_refused_naming_it(monkeypatch, capsys, tmp_path):
     line = _refused(monkeypatch, capsys, tmp_path, json.dumps([ISSUE]), "[{")
-    assert line.startswith("workflow: can't read `prs.json`: it isn't JSON ("), line
+    assert line.startswith("workflow: can't read `prs.json`: it isn't valid JSON ("), line
+
+
+@pytest.mark.parametrize(
+    "issues, prs, name",
+    [
+        ("[" * 100000 + "]" * 100000, json.dumps([PR]), "issues.json"),
+        ("[" * 100000, json.dumps([PR]), "issues.json"),
+        (json.dumps([ISSUE]), '{"a": ' * 100000 + "1" + "}" * 100000, "prs.json"),
+    ],
+)
+def test_json_nested_too_deeply_is_refused_in_one_line(monkeypatch, capsys, tmp_path, issues, prs, name):
+    """Read as doctor reads JSON text (`doctor._parse_json`), never a traceback."""
+    line = _refused(monkeypatch, capsys, tmp_path, issues, prs)
+    assert line == f"workflow: can't read `{name}`: it is nested too deeply to read"
+
+
+@pytest.mark.parametrize("issues", ["1" + "0" * 4300, '[{"number": 1' + "0" * 5000 + "}]"])
+def test_a_number_too_long_to_read_is_refused_in_one_line(monkeypatch, capsys, tmp_path, issues):
+    line = _refused(monkeypatch, capsys, tmp_path, issues)
+    assert line.startswith("workflow: can't read `issues.json`: it can't be read (ValueError: Exceeds the limit"), line
 
 
 def test_standard_input_that_isnt_json_is_named_as_standard_input(monkeypatch, capsys, tmp_path):
@@ -67,7 +87,7 @@ def test_standard_input_that_isnt_json_is_named_as_standard_input(monkeypatch, c
     monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"oops")))
     assert cli.main(["status", "--issues", "-", "--prs", "prs.json"]) == 1
     err = capsys.readouterr().err
-    assert err.startswith("workflow: can't read standard input (-): it isn't JSON ("), err
+    assert err.startswith("workflow: can't read standard input (-): it isn't valid JSON ("), err
     assert len(err.strip().splitlines()) == 1
 
 

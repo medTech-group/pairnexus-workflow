@@ -165,13 +165,11 @@ def _issues_file(path: str, what: str) -> list[dict]:
     the GitHub API lists them: a list of objects with a number, or
     `--paginate --slurp`'s pages of them, flattened. A file that isn't JSON,
     or isn't such a list (GitHub's error object, say), raises
-    `InputUnreadable` with no errno, so `main` refuses it in one line (#757)."""
-    text = _read(path).removeprefix("﻿")
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError as e:
-        why = "it is empty" if not text.strip() else f"{e.msg} at line {e.lineno}, column {e.colno}"
-        raise InputUnreadable(None, f"it isn't JSON ({why})", path) from None
+    `InputUnreadable` with no errno, so `main` refuses it in one line (#757):
+    JSON text read as doctor reads it (`doctor._parse_json`), its reason."""
+    value, why = doctor_mod._parse_json(_read(path).removeprefix("﻿"))
+    if why:
+        raise InputUnreadable(None, why, path)
     if isinstance(value, list):
         entries = [x for v in value for x in (v if isinstance(v, list) else [v])]  # a page's, or the list's own
         if all(isinstance(x, dict) and doctor_mod._number(x) is not None for x in entries):
