@@ -61,13 +61,12 @@ _NEGATED = re.compile(r"(?:\bnot|\bno\s+longer|n['’]t|\bnever)\s+(?:\w+\s+)?$"
 
 
 def labels_of(issue: dict) -> set[str]:
-    """The issue's labels, casefolded."""
-    out = set()
-    for l in issue.get("labels") or []:
-        name = (l.get("name") or "") if isinstance(l, dict) else str(l)
-        if name:
-            out.add(name.casefold())
-    return out
+    """The issue's labels, casefolded, as GitHub matches them: names, or
+    objects with a text `name`. A label of any other type is read past, the
+    others kept, and a `labels` field that isn't a list reads as none (#772)."""
+    labels = issue.get("labels")
+    names = [l.get("name") if isinstance(l, dict) else l for l in labels] if isinstance(labels, list) else []
+    return {n.casefold() for n in names if isinstance(n, str) and n}
 
 
 def assignees_of(issue: dict) -> list[str]:
