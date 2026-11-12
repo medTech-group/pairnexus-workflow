@@ -316,12 +316,15 @@ def cmd_ready(a) -> int:
             }
         )
     else:
+        # Each line through `escape_surrogates`: a lone surrogate in a title,
+        # a note or a reason is shown as its escape, never a traceback (#785).
+        esc = issues_mod.escape_surrogates
         for v in verdicts:
             mark = "READY" if v.ready else "wait "
             why = "" if v.ready else " — " + "; ".join(v.reasons)
-            print(f"{mark} #{v.number} [{v.area or '-'}] {v.title}{why}")
+            print(esc(f"{mark} #{v.number} [{v.area or '-'}] {v.title}{why}"))
             for note in v.notes:
-                print(f"      note: {note}")
+                print(esc(f"      note: {note}"))
         print("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
     return 0
 
