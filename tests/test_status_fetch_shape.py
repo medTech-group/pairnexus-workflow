@@ -209,14 +209,36 @@ def test_fetch_and_the_file_share_one_check():
 
 
 def test_the_check_names_each_kind():
-    def holds(_):
-        return True
+    assert cli._not_a_list([ISSUE], "issues") is None
+    assert cli._not_a_list([5], "issues") == "it isn't a list of issues (it is a list holding something other than issues)"
+    assert cli._not_a_list(None, "pull requests") == "it isn't a list of pull requests (it is null)"
+    assert cli._not_a_list(True, "issues") == "it isn't a list of issues (it is true or false)"
+    assert cli._not_a_list({"items": []}, "issues") == "it isn't a list of issues (it is a JSON object)"
 
-    assert cli._not_a_list([ISSUE], "issues", holds) is None
-    assert cli._not_a_list([], "issues", lambda _: False) == "it isn't a list of issues (it is a list holding something other than issues)"
-    assert cli._not_a_list(None, "pull requests", holds) == "it isn't a list of pull requests (it is null)"
-    assert cli._not_a_list(True, "issues", holds) == "it isn't a list of issues (it is true or false)"
-    assert cli._not_a_list({"items": []}, "issues", holds) == "it isn't a list of issues (it is a JSON object)"
+
+def test_the_check_holds_the_one_test_of_the_list():
+    """`_not_a_list` itself tests the list: nothing in it, however its lists
+    nest, but objects. A caller gives only how deep it reads (`deepest`, as
+    `_fetch_items` counts it) and what each object needs (`each`: a file's
+    whole-number number), never a test of the list of its own."""
+    mixed = "it isn't a list of issues (it is a list holding something other than issues)"
+    assert cli._not_a_list([[ISSUE], [[ISSUE]]], "issues") is None
+    assert cli._not_a_list([[[ISSUE, 5]]], "issues") == mixed
+    assert cli._not_a_list([[ISSUE]], "issues", deepest=2) is None
+    assert cli._not_a_list([[[ISSUE]]], "issues", deepest=2) == mixed
+    assert cli._not_a_list([{"title": "no number"}], "issues") is None
+    numbered = lambda x: x.get("number") is not None  # noqa: E731
+    assert cli._not_a_list([[{"title": "no number"}]], "issues", each=numbered) == mixed
+    assert cli._not_a_list([[ISSUE]], "issues", each=numbered) is None
+    assert cli._not_a_list([[ISSUE], 5], "issues", each=lambda x: True) == mixed
+
+
+def test_neither_caller_tests_the_list_itself():
+    """`_issues_file` and `_fetch` leave the test of the list to `_not_a_list`:
+    the file gives it only its whole-number number for each issue."""
+    fetch, issues_file = inspect.getsource(cli._fetch), inspect.getsource(cli._issues_file)
+    assert "only_objects" not in fetch and "NotAnObject" not in fetch
+    assert "isinstance(" not in issues_file
 
 
 # ---------- the other callers of `_fetch` ----------
@@ -262,3 +284,18 @@ def test_the_changelog_says_what_changed():
     assert "`--issues` file" in note
     assert "`VERSION` is unchanged" in note
     assert "tests/test_status_fetch_shape.py" in note
+
+
+def test_the_changelog_says_only_the_depth_differs(monkeypatch, capsys, tmp_path):
+    """The note claims the file's reason for a page, not the file's answer for
+    any text: a file is read 2 lists deep, `gh`'s output as deep as #788 reads
+    it, so `[[[{"number": 12}]]]` is refused as a file and read from `gh`."""
+    note = " ".join(entry("#789, found in the review of #775's pull request").split())
+    assert "as the same text given as an `--issues` file is" not in note
+    assert "a file 2 lists deep" in note
+    text = '[[[{"number": 12}]]]'
+    assert text in note
+    assert _file_reason(monkeypatch, capsys, tmp_path / "file", text) == REASONS["mixed"]
+    _project(monkeypatch, tmp_path / "fetch")
+    fake_gh.install(tmp_path / "fetch", monkeypatch, {"repos/acme/demo/issues": fake_gh.pages(json.loads(text)), "repos/acme/demo/pulls": fake_gh.pages([PR])})
+    assert cli.main(["status", "--fetch"]) == 0, capsys.readouterr().err

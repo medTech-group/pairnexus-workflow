@@ -170,25 +170,28 @@ def _issues_file(path: str, what: str) -> list[dict]:
     value, why = doctor_mod._parse_json(_read(path).removeprefix("﻿"))
     if why:
         raise InputUnreadable(None, why, path)
-
-    def numbered(entries: list) -> bool:  # each a numbered object: a page's, or the list's own
-        return all(isinstance(x, dict) and doctor_mod._number(x) is not None for v in entries for x in (v if isinstance(v, list) else [v]))
-
-    why = _not_a_list(value, what, numbered)
+    why = _not_a_list(value, what, deepest=2, each=lambda x: doctor_mod._number(x) is not None)  # the list, and the pages in it
     if why:
         raise InputUnreadable(None, why, path)
     return _fetch_items(value)
 
 
-def _not_a_list(value, what: str, holds) -> str | None:
+def _not_a_list(value, what: str, deepest: int | None = None, each=None) -> str | None:
     """Why `value`, JSON as read, isn't a list of `what` ("issues" or "pull
     requests"), or None: the reason `_issues_file` gives a file (#757) and
-    `_fetch` gives `gh`'s answer (#789). A list is one when `holds(value)`
-    says its entries are, else "a list holding something other than" them;
-    anything else is named by its kind, GitHub's error object with its
-    message, escaped and cut to 80 characters (`reviews._shown`)."""
+    `_fetch` gives each page `gh` gives (#789). A list is one when nothing in
+    it, however its lists nest, is anything but an object; with `deepest`,
+    its lists nest no deeper than that (as `_fetch_items` counts it), and
+    with `each`, every object passes it (a file's whole-number number).
+    Any other list is "a list holding something other than" them; anything
+    else is named by its kind, GitHub's error object with its message,
+    escaped and cut to 80 characters (`reviews._shown`)."""
     if isinstance(value, list):
-        if holds(value):
+        try:
+            entries = _fetch_items(value, deepest=deepest, only_objects=True)
+        except (TooDeep, NotAnObject):
+            entries = None
+        if entries is not None and (each is None or all(each(x) for x in entries)):
             return None
         kind = f"a list holding something other than {what}"
     elif isinstance(value, dict):
@@ -288,20 +291,13 @@ def _fetch(repo: str, what: str) -> list[dict]:
         """The objects in `pages`, each page as `gh` printed it, once each is
         a list of objects, or pages of them (#789)."""
         for page in pages:
-            why = _not_a_list(page, "issues" if what == "issues" else "pull requests", objects)
+            why = _not_a_list(page, "issues" if what == "issues" else "pull requests")
             if why:
                 raise FetchUnreadable(_gave(repo, what), why)
         try:
             return _fetch_items(pages, deepest=FETCH_DEPTH)
         except TooDeep:
             raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
-
-    def objects(page: list) -> bool:  # however deep its lists nest, nothing but objects in them
-        try:
-            _fetch_items(page, only_objects=True)
-        except NotAnObject:
-            return False
-        return True
 
     p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
     if p.returncode == 0:
