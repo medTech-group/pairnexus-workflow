@@ -3264,12 +3264,8 @@ def _runs(i: Inputs) -> _Answer:
     return i._runs
 
 
-def _label_names(issue: dict) -> set[str]:
-    """An issue's labels, casefolded, as GitHub matches them: objects with a
-    name, or names."""
-    labels = issue.get("labels")
-    names = [x.get("name") if isinstance(x, dict) else x for x in labels] if isinstance(labels, list) else []
-    return {x.casefold() for x in names if isinstance(x, str)}
+# An issue's labels, read through the one shared reader (#778).
+_label_names = issues_mod.labels_of
 
 
 def _number(issue: dict) -> int | None:

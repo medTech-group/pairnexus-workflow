@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import charter as charter_mod
+from . import issues as issues_mod
 from . import presets as presets_mod
 from . import state as state_mod
 
@@ -59,14 +60,6 @@ def _duration(h: float) -> str:
 
 def _round_hours(h: float) -> int:
     return max(1, math.floor(h + 0.5))
-
-
-def _labels(issue: dict) -> set[str]:
-    labels = issue.get("labels")
-    if not isinstance(labels, list):
-        return set()
-    names = [x.get("name") if isinstance(x, dict) else x for x in labels]
-    return {x for x in names if isinstance(x, str)}
 
 
 def _run_of(issue: dict) -> tuple[dict | None, str | None]:
@@ -146,7 +139,7 @@ def past_runs(issues: Any) -> tuple[list[dict], list[str]]:
         and _int(x.get("number"))
         and "pull_request" not in x
         and _closed(x)
-        and ("labels" not in x or RUN_LABEL in _labels(x))
+        and ("labels" not in x or RUN_LABEL in issues_mod.labels_of(x))
     ]
     candidates.sort(key=lambda x: (_closed_at(x), x["number"]), reverse=True)
     runs: list[dict] = []

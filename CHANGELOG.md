@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**`workflow doctor` and the conductor's estimate read labels through the one shared reader** (#778, found in the review of #772's pull request). `doctor._label_names` and `estimate._labels` each kept their own copy of the label reading that `issues.labels_of` (#772) does. They differed on two inputs: doctor kept an empty name (`""` or `{"name": ""}`) as a label of its own, which `issues.labels_of` reads past, and the estimate didn't casefold, so a past run labelled `Workflow:Run` wasn't counted, though GitHub matches labels in any case and doctor counted it.
+
+- **One reader now:** `doctor._label_names` is `issues.labels_of`, and `estimate.past_runs` reads through it, so doctor and the estimate keep the same issues as past runs. An empty name is read past in every reader.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_label_readers.py`.
+
 **`workflow status --fetch` refuses issues without a whole-number number in one line** (#775, found in the review of #770's pull request). `workflow status --issues F --prs G` refuses a file whose items have no whole-number `number` (#757), but `workflow status --fetch` read `gh api`'s pages with no such check: an item with no `number` ended in `KeyError: 'number'`, and a list mixing `"number": "1"` and `"number": 2` in `TypeError: '<' not supported between instances of 'int' and 'str'`. GitHub's API always gives whole numbers; a proxy or a client that answers otherwise ended the guided start's first command in a traceback.
 
 - **One line now,** on standard error, exit 1, with or without `--json`: `` workflow: can't read the issues `gh api repos/<repo>/issues` gave: N of M has no whole-number number (fetch them with the GitHub MCP tools and give --issues and --prs files instead) ``, or the pull requests `gh api repos/<repo>/pulls` gave, the profile's `project.repo` shown with its control characters and backticks escaped. A number is whole as a file's is (`doctor._number`): `"1"`, `true`, `1.0` and null aren't.
