@@ -137,6 +137,17 @@ def test_a_pull_request_marker_of_the_wrong_type_still_marks_a_pull_request(monk
     assert got["to_triage"] == []
 
 
+def test_a_blocker_whose_pull_request_marker_is_of_the_wrong_type_holds_its_ticket(monkeypatch, capsys, tmp_path):
+    """A closed item whose `pull_request` is `5`, named as a ticket's blocker:
+    still a pull request, read without its details, so one closed without
+    merging, and the ticket isn't ready. Never a traceback."""
+    ticket = {**TICKET, "body": "## Blocked by\n\n#4\n"}
+    got = _json(monkeypatch, capsys, tmp_path, [ticket, {"number": 4, "state": "closed", "pull_request": 5}], [])
+    assert [i["number"] for i in got["ready"]] == []
+    merged = {"number": 4, "state": "closed", "pull_request": {"merged_at": "2026-11-01T00:00:00Z"}}
+    assert [i["number"] for i in _json(monkeypatch, capsys, tmp_path, [ticket, merged], [])["ready"]] == [1]
+
+
 PR_CASES = [
     # The ticket's own cases.
     (("head",), "main", ("head",)),
