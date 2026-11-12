@@ -60,6 +60,14 @@ _MID_BLOCKED = re.compile(rf"\bblocked\s+by\s*:?\s*\**\s*({_ONE_REF}(?:\s*(?:,|\
 _NEGATED = re.compile(r"(?:\bnot|\bno\s+longer|n['’]t|\bnever)\s+(?:\w+\s+)?$", re.I)
 
 
+def is_whole(v) -> bool:
+    """Whether a value read from JSON or TOML is a whole number: an `int`,
+    never a `bool` (which Python counts as one). A float such as `3.0`, a
+    text such as `"3"` and None aren't. Every whole-number check in the kit
+    calls it (#773); a caller adds its own range."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
 def labels_of(issue: dict) -> set[str]:
     """The issue's labels, casefolded, as GitHub matches them: names, or
     objects with a text `name`. A label of any other type is read past, the
@@ -771,7 +779,7 @@ def parent_of(issue: dict, repo: str | None = None) -> int | None:
     does), else the first ref on the first line under a `## Parent` heading.
     None when it has none, or its parent is in another repository."""
     p = issue.get("parent")
-    if isinstance(p, dict) and isinstance(p.get("number"), int) and not isinstance(p["number"], bool):
+    if isinstance(p, dict) and is_whole(p.get("number")):
         where = p.get("repository")
         if isinstance(where, dict):
             where = where.get("full_name") or where.get("nameWithOwner")
@@ -841,7 +849,7 @@ def _spec_note(
 
     try:
         carried = spec.get("comments")
-        if isinstance(carried, int) and not isinstance(carried, bool) and carried == 0:
+        if is_whole(carried) and carried == 0:
             comments = []
         elif isinstance(carried, (list, dict)):  # the MCP route's file carries them
             comments = comments_from(carried)

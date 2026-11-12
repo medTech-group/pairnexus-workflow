@@ -31,6 +31,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from . import issues as issues_mod
+
 # The rules that make a branch protected, with what their absence means.
 NEEDED = {
     "deletion": "deletions allowed: no active ruleset on {base} restricts deletions",
@@ -523,7 +525,7 @@ def _update(ruleset, verb: str) -> tuple[str, dict]:
     if ruleset["target"] != "branch":
         raise ProtectionError(f"{where} is a {quote(ruleset['target'])} ruleset: only a branch ruleset can {verb}")
     rid = ruleset.get("id")
-    if not isinstance(rid, int) or isinstance(rid, bool) or rid <= 0:
+    if not issues_mod.is_whole(rid) or rid <= 0:
         raise ProtectionError(f"{where} has no id, so the request can't name it")
     if ruleset.get("source_type") == "Organization":
         raise ProtectionError(f"{where} is an organisation's ruleset: the kit changes only the repository's own, so change it in the organisation's settings")
@@ -633,7 +635,7 @@ def _longest_if_clean(report) -> int | None:
     signals = mq.get("signals")
     ci = signals.get("ci_minutes") if isinstance(signals, dict) else None
     longest = ci.get("longest") if isinstance(ci, dict) else None
-    if longest is not None and (not isinstance(longest, int) or isinstance(longest, bool) or longest < 0):
+    if longest is not None and (not issues_mod.is_whole(longest) or longest < 0):
         raise ProtectionError("the doctor file: merge_queue.signals.ci_minutes.longest must be whole minutes, or null")
     return longest
 
@@ -692,7 +694,7 @@ def _whole(pages: list, key: str, what: str) -> None:
     """Raises when the pages hold fewer items than GitHub's total_count says there are."""
     for p in pages:
         t = p.get("total_count")
-        if t is not None and (not isinstance(t, int) or isinstance(t, bool) or t < 0):
+        if t is not None and (not issues_mod.is_whole(t) or t < 0):
             raise ProtectionError(f"the {what} file: total_count must be a number, as GitHub gives it")
     total = max((p["total_count"] for p in pages if p.get("total_count") is not None), default=None)
     have = sum(len(p[key]) for p in pages)
@@ -763,7 +765,7 @@ def _statuses(data, commit: str | None = None) -> list[Ran]:
 
 
 def _id(item: dict) -> int:
-    return item["id"] if isinstance(item.get("id"), int) and not isinstance(item.get("id"), bool) else 0
+    return item["id"] if issues_mod.is_whole(item.get("id")) else 0
 
 
 def _collapse(results: list[Ran]) -> list[Ran]:

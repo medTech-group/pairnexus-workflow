@@ -9,6 +9,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import issues as issues_mod
 from . import presets as presets_mod
 from . import proc as proc_mod
 from . import roles as roles_mod
@@ -269,7 +270,7 @@ def _strs(v, where: str) -> list[str]:
 def _int(v, where: str, default: int, lo: int = 0, hi: int = 10_000) -> int:
     if v is None:
         return default
-    if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
+    if not issues_mod.is_whole(v) or not lo <= v <= hi:
         raise ProfileError(f"{where}: expected a whole number from {lo} to {hi}")
     return v
 

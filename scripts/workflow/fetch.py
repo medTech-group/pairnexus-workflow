@@ -29,6 +29,7 @@ import shutil
 import subprocess
 from urllib.parse import quote
 
+from . import issues as issues_mod
 from . import merge
 from .posts import CommentsError, _login, comments_from, decode_values
 
@@ -206,7 +207,7 @@ def _refused(e: GhError) -> bool:
 
 
 def _id(v) -> int | None:
-    return v if isinstance(v, int) and not isinstance(v, bool) else None
+    return v if issues_mod.is_whole(v) else None
 
 
 def session_threads(r: str, number: int, pr) -> dict:

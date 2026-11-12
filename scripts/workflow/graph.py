@@ -403,7 +403,7 @@ def runs(issues: list[dict]) -> Runs:
             got.unread.append(f"run #{n}: its state can't be read (it isn't a JSON object), so its by-hand issue isn't told apart")
             continue
         h = st.get("by_hand_issue")
-        if isinstance(h, int) and not isinstance(h, bool):
+        if issues_mod.is_whole(h):
             got.by_hand.add(h)
         elif h is not None:
             got.unread.append(f"run #{n}: its state names no by-hand issue it can read ({h!r}), so its by-hand issue isn't told apart")

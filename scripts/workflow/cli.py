@@ -357,7 +357,7 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
             raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
         return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins, token))
 
-    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and type(p.get("number")) is int] if isinstance(prs, list) else []
+    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and issues_mod.is_whole(p.get("number"))] if isinstance(prs, list) else []
     issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions, pull_numbers=pull_numbers)
 
 
@@ -932,7 +932,7 @@ def _state_join(a, body: str) -> int:
         issues, perms_raw = estimate_mod._flatten(inputs["issues"][0]), inputs["permissions"][0]
         # A saved error (`{"message": …}`) or anything else that isn't an issue is never read as "no issues".
         for i in issues:
-            if not (isinstance(i, dict) and isinstance(i.get("number"), int) and not isinstance(i["number"], bool)):
+            if not (isinstance(i, dict) and issues_mod.is_whole(i.get("number"))):
                 said = f": {str(i['message'])[:200]}" if isinstance(i, dict) and "message" in i else ""
                 raise state_mod.StateError(f"--issues holds something that isn't an issue{said}; fetch the open issues again")
     try:
