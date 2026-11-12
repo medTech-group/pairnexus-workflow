@@ -75,6 +75,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, unquote
 
+from . import issues as issues_mod
+
 # The rule a record written from a findings file names (spec #412).
 RULE = 2
 MARKS = ("blocks", "ticket", "note")
@@ -281,12 +283,12 @@ def _issue_read(text: str) -> int | None:
 
 
 def _issue_ok(value) -> bool:
-    return type(value) is int and _issue_read(str(value)) == value
+    return issues_mod.is_whole(value) and _issue_read(str(value)) == value
 
 
 def _issue(value, where: str, quoted: bool) -> int:
     """An issue's number from the file: 415, or "#415"."""
-    text = value if isinstance(value, str) else str(value) if type(value) is int else ""
+    text = value if isinstance(value, str) else str(value) if issues_mod.is_whole(value) else ""
     m = _ISSUE.fullmatch(text.strip())
     if not m:
         raise FindingsError(f"{where}: {_ISSUE_RULE}" + (f", not {_json(value)}" if quoted else ""))

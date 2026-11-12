@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**One shared whole-number check** (#773, found in the review of #770's pull request). `status._whole` (#770) checked that a value is a whole number (an `int` that isn't a `bool`), a copy of the same check in `state._int`, `doctor._number`, `merge.py`, `presets.py`, `charter.py` and seven more of the kit's modules, `issues.py` among them. They all call `is_whole` in `scripts/workflow/issues.py` now, each adding its own range; the architecture page lists it under its helpers.
+
+- **What it reads:** `3` and `-2` are whole numbers; `True`, `3.0`, `"3"` and None aren't, as before. What every command accepts and refuses is unchanged.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_is_whole.py`.
+
 **`workflow status` reads labels through the one shared reader** (#772, found in the review of #770's pull request). `status.as_read` (#770) kept its own label filter, a copy of what `doctor` already reads, while `issues.labels_of`, the shared reader `workflow status` reads labels through, read a label `7` as "7" and ended in a traceback on an object whose `name` isn't text.
 
 - **`issues.labels_of` reads past a label of the wrong type now,** as doctor's reader does: it keeps names and objects with a text `name`, casefolded, and reads a `labels` field that isn't a list as none, where it read an object's keys or a text's letters as labels. `as_read` keeps no label filter of its own. What `workflow status` shows is unchanged; `ready`, `state` and `workflow graph`, which read labels through it too, now read past such a label the same way.

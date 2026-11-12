@@ -118,7 +118,7 @@ _TEXTS = ("state", "state_reason", "title", "body")
 
 
 def _whole(v) -> bool:
-    return v is None or (isinstance(v, int) and not isinstance(v, bool))
+    return v is None or issues_mod.is_whole(v)
 
 
 def as_read(item: dict) -> dict:

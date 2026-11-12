@@ -82,7 +82,7 @@ def empty(charter: dict | None = None) -> dict:
 
 
 def _int(v) -> bool:
-    return isinstance(v, int) and not isinstance(v, bool)
+    return issues_mod.is_whole(v)
 
 
 def _iso(v) -> bool:

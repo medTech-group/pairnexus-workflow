@@ -1472,7 +1472,7 @@ def _rulesets(i: Inputs, deadline: float) -> tuple[_Answer, bool]:
         return (_Answer([]) if plan else listed), plan
     flat = [x for page in listed.value for x in (page if isinstance(page, list) else [page])]
     ids = [x.get("id") if isinstance(x, dict) else None for x in flat]
-    if not all(isinstance(n, int) and not isinstance(n, bool) for n in ids):
+    if not all(issues_mod.is_whole(n) for n in ids):
         return _Answer(why=Words("GitHub's list of rulesets couldn't be read", "`gh api`'s list of rulesets has an entry without an id"), fix=_again()), False
     full = []
     for n in ids:
@@ -2227,7 +2227,7 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
         )))
     prs = _rules(rep, "pull_request")
     counts = [p.get("required_approving_review_count") for p in prs if "required_approving_review_count" in p]
-    unread = [c for c in counts if not isinstance(c, int) or isinstance(c, bool) or c < 0]
+    unread = [c for c in counts if not issues_mod.is_whole(c) or c < 0]
     most = max((c for c in counts if c not in unread), default=0)
     if unread:
         lines.append(Line(g, "github.approvals", "cant_check", Words(
@@ -3274,7 +3274,7 @@ def _label_names(issue: dict) -> set[str]:
 
 def _number(issue: dict) -> int | None:
     n = issue.get("number")
-    return n if isinstance(n, int) and not isinstance(n, bool) else None
+    return n if issues_mod.is_whole(n) else None
 
 
 def _read_runs(i: Inputs) -> _Answer:
