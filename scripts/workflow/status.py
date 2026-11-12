@@ -309,6 +309,13 @@ def local_gap_lines(st: Status) -> list[str]:
 
 
 def text(st: Status) -> str:
+    """The status as text, for a terminal: a lone surrogate in an issue's or
+    pull request's text (a title, a branch) is shown as its JSON escape,
+    `\\ud800`, since it can't be printed (#774)."""
+    return issues_mod.escape_surrogates(_text(st))
+
+
+def _text(st: Status) -> str:
     if st.profile_error:
         kit, solo = "set up, but its profile has an error (kit.profile)", "unknown (the profile has an error)"
     else:

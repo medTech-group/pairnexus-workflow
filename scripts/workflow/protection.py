@@ -92,7 +92,7 @@ def printable(dumped: str) -> str:
     printed, escaped as JSON escapes them."""
     out = dumped.replace("\x85", "\\u0085").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     # A lone surrogate can't be printed; escape it as JSON does.
-    return re.sub("[\ud800-\udfff]", lambda m: f"\\u{ord(m.group()):04x}", out)
+    return issues_mod.escape_surrogates(out)
 
 
 def branch(name: str) -> str:
