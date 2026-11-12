@@ -204,6 +204,36 @@ def _print_text(text: str, file=None) -> None:
     print(text, file=stream)
 
 
+# How deep `_fetch` reads lists: `--paginate --slurp`'s pages of items, as
+# `_fetch` wraps them, are three; past this, it isn't what `gh` prints (#788).
+# It counts that wrapping list, so `gh`'s own output is read up to 7 deep.
+FETCH_DEPTH = 8
+# What `_fetch`'s refusals suggest instead.
+FETCH_INSTEAD = "fetch them with the GitHub MCP tools and give --issues and --prs files instead"
+
+
+class FetchUnreadable(SystemExit):
+    """`_fetch`'s refusal of output `gh` gave with exit 0 that it can't read
+    (#788): `gave`, what it names ("the issues `gh api repos/<repo>/issues`
+    gave"), and `why`, for a caller with its own wording (`state join`); as a
+    SystemExit, the one `workflow:` line the command prints, exit 1."""
+
+    def __init__(self, gave: str, why: str):
+        self.gave, self.why = gave, why
+        super().__init__(f"workflow: can't read {gave}: {why} ({FETCH_INSTEAD})")
+
+
+class TooDeep(ValueError):
+    """`_fetch_items` met lists nested deeper than its `deepest`."""
+
+
+def _gave(repo: str, what: str) -> str:
+    """What `_fetch` read, as its refusals name it: the repo shown escaped
+    (`reviews._shown`), so the line stays one line (#775)."""
+    shown = reviews_mod._shown(repo, len(repo))
+    return f"the issues `gh api repos/{shown}/issues` gave" if what == "issues" else f"the pull requests `gh api repos/{shown}/pulls` gave"
+
+
 def _fetch(repo: str, what: str) -> list[dict]:
     """Through `gh api` (the GitHub CLI, or Claude Code's built-in client).
 
@@ -211,7 +241,14 @@ def _fetch(repo: str, what: str) -> list[dict]:
     prints the pages one after another, which are decoded one by one. Where a
     cloud session's proxy refuses the next-page link (#568), the pages are
     read one at a time (`fetch.by_page`). The issues list keeps its pull
-    requests: readiness resolves a PR blocker by them.
+    requests: readiness resolves a PR blocker by them. Output that isn't
+    JSON, holds a number too long or nests lists too deeply raises
+    `FetchUnreadable` (#788), with `--slurp` or without: read as JSON with
+    `doctor._parse_json`, the reader `_issues_file` uses (an old `gh`'s
+    pages one after another with `posts.decode_values`), its pages
+    flattened without recursion. Read page by page, only lists nested too
+    deeply that Python's own reader can read raise it; that route's other
+    refusals are #810's.
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 
@@ -224,25 +261,34 @@ def _fetch(repo: str, what: str) -> list[dict]:
         except fetch_mod.GhError as e:
             raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
 
+    def items(values) -> list[dict]:
+        try:
+            return _fetch_items(values, deepest=FETCH_DEPTH)
+        except TooDeep:
+            raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
+
     p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
     values: list = []
     if p.returncode == 0:
-        values = [json.loads(p.stdout or "[]")]
+        value, why = doctor_mod._parse_json(p.stdout if p.stdout.strip() else "[]")  # no output: no pages
+        if why:
+            raise FetchUnreadable(_gave(repo, what), why)
+        values = [value]
     elif fetch_mod.numeric_refused(p, path):
         values = by_page()
     elif "slurp" in (p.stderr + p.stdout).lower():
         p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
         if fetch_mod.numeric_refused(p, path):
-            return _fetch_items(by_page())
+            return items(by_page())
         if p.returncode:
             raise failed(p)
         try:
             values = posts_mod.decode_values(p.stdout)
         except posts_mod.CommentsError as e:
-            raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
+            raise FetchUnreadable(_gave(repo, what), f"it can't be read ({e})") from None
     else:
         raise failed(p)
-    return _fetch_items(values)
+    return items(values)
 
 
 def _unnumbered(items: list[dict], what: str) -> str | None:
@@ -253,18 +299,24 @@ def _unnumbered(items: list[dict], what: str) -> str | None:
     return f"{what}: {n} of {len(items)} {'has' if n == 1 else 'have'} no whole-number number" if n else None
 
 
-def _fetch_items(values) -> list[dict]:
-    """The objects in `_fetch`'s pages, however deep the lists nest."""
+def _fetch_items(values, deepest: int | None = None) -> list[dict]:
+    """The objects in `_fetch`'s pages, in order, however deep the lists nest,
+    read without recursion (#788). With `deepest`, lists nested deeper than
+    that raise `TooDeep`."""
     items: list[dict] = []
-
-    def add(v) -> None:
-        if isinstance(v, list):
-            for x in v:
-                add(x)
+    done = object()
+    stack = [(iter([values]), 0)]  # each list being read, and how deep it is
+    while stack:
+        it, depth = stack[-1]
+        v = next(it, done)
+        if v is done:
+            stack.pop()
+        elif isinstance(v, list):
+            if deepest is not None and depth >= deepest:
+                raise TooDeep(f"lists nested deeper than {deepest}")
+            stack.append((iter(v), depth + 1))
         elif isinstance(v, dict):
             items.append(v)
-
-    add(values)
     return items
 
 
@@ -418,12 +470,9 @@ def _status(a) -> int:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
             issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
-            repo = reviews_mod._shown(prof.repo, len(prof.repo))
-            why = _unnumbered(issues, f"the issues `gh api repos/{repo}/issues` gave") or _unnumbered(
-                prs, f"the pull requests `gh api repos/{repo}/pulls` gave"
-            )
+            why = _unnumbered(issues, _gave(prof.repo, "issues")) or _unnumbered(prs, _gave(prof.repo, "pulls"))
             if why:
-                print(f"workflow: can't read {why} (fetch them with the GitHub MCP tools and give --issues and --prs files instead)", file=sys.stderr)
+                print(f"workflow: can't read {why} ({FETCH_INSTEAD})", file=sys.stderr)
                 return 1
     elif a.issues or a.prs:
         if not a.issues or not a.prs:
@@ -959,7 +1008,8 @@ def _state_join(a, body: str) -> int:
         try:
             issues = _fetch(prof.repo, "issues")
         except SystemExit as e:
-            raise SystemExit(f"workflow state join: the open issues couldn't be read ({str(e.code).splitlines()[0]}); {instead}") from None
+            why = f"can't read {e.gave}: {e.why}" if isinstance(e, FetchUnreadable) else str(e.code).splitlines()[0]
+            raise SystemExit(f"workflow state join: the open issues couldn't be read ({why}); {instead}") from None
         try:
             perms_raw = fetch_mod.permissions_of(prof.repo, state_mod.authors(s, issues))
         except fetch_mod.GhError as e:
