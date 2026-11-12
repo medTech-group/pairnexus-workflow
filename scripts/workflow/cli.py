@@ -228,6 +228,14 @@ def _fetch(repo: str, what: str) -> list[dict]:
     return _fetch_items(values)
 
 
+def _unnumbered(items: list[dict], what: str) -> str | None:
+    """Why `_fetch`'s `items` (`what`, as the refusal names them) can't be
+    read, or None: each needs a whole-number `number` (`doctor._number`), as
+    `_issues_file` asks of a file's (#775)."""
+    n = sum(doctor_mod._number(x) is None for x in items)
+    return f"{what}: {n} of {len(items)} {'has' if n == 1 else 'have'} no whole-number number" if n else None
+
+
 def _fetch_items(values) -> list[dict]:
     """The objects in `_fetch`'s pages, however deep the lists nest."""
     items: list[dict] = []
@@ -385,6 +393,13 @@ def _status(a) -> int:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
             issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
+            repo = reviews_mod._shown(prof.repo, len(prof.repo))
+            why = _unnumbered(issues, f"the issues `gh api repos/{repo}/issues` gave") or _unnumbered(
+                prs, f"the pull requests `gh api repos/{repo}/pulls` gave"
+            )
+            if why:
+                print(f"workflow: can't read {why} (fetch them with the GitHub MCP tools and give --issues and --prs files instead)", file=sys.stderr)
+                return 1
     elif a.issues or a.prs:
         if not a.issues or not a.prs:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
