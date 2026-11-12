@@ -126,9 +126,10 @@ def test_the_page_by_page_route_is_refused_the_same_way(monkeypatch, capsys, tmp
     one at a time (`fetch.by_page`): a page that isn't a list of issues is
     refused with the same reason."""
     page = json.loads(ANSWERS[case])
-    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": fake_gh.pages(page, numeric_refused=True),
-                                                    "repos/acme/demo/pulls": fake_gh.pages([PR])}, slurp=slurp)
+    routes = {"repos/acme/demo/issues": fake_gh.pages(page, [ISSUE], numeric_refused=True), "repos/acme/demo/pulls": fake_gh.pages([PR])}
+    line = _refused(monkeypatch, capsys, tmp_path, routes, slurp=slurp)
     assert line == f"workflow: can't read {GAVE['issues']}: {REASONS[case]}{INSTEAD}"
+    assert "repos/acme/demo/issues?state=all&per_page=100&page=1" in fake_gh.FakeGh(tmp_path / "fake-gh-bin").paths()
 
 
 @pytest.mark.parametrize("case", list(ANSWERS))

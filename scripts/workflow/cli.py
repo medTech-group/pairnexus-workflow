@@ -170,17 +170,33 @@ def _issues_file(path: str, what: str) -> list[dict]:
     value, why = doctor_mod._parse_json(_read(path).removeprefix("﻿"))
     if why:
         raise InputUnreadable(None, why, path)
+
+    def numbered(entries: list) -> bool:  # each a numbered object: a page's, or the list's own
+        return all(isinstance(x, dict) and doctor_mod._number(x) is not None for v in entries for x in (v if isinstance(v, list) else [v]))
+
+    why = _not_a_list(value, what, numbered)
+    if why:
+        raise InputUnreadable(None, why, path)
+    return _fetch_items(value)
+
+
+def _not_a_list(value, what: str, holds) -> str | None:
+    """Why `value`, JSON as read, isn't a list of `what` ("issues" or "pull
+    requests"), or None: the reason `_issues_file` gives a file (#757) and
+    `_fetch` gives `gh`'s answer (#789). A list is one when `holds(value)`
+    says its entries are, else "a list holding something other than" them;
+    anything else is named by its kind, GitHub's error object with its
+    message, escaped and cut to 80 characters (`reviews._shown`)."""
     if isinstance(value, list):
-        entries = [x for v in value for x in (v if isinstance(v, list) else [v])]  # a page's, or the list's own
-        if all(isinstance(x, dict) and doctor_mod._number(x) is not None for x in entries):
-            return _fetch_items(value)
+        if holds(value):
+            return None
         kind = f"a list holding something other than {what}"
     elif isinstance(value, dict):
         message = value.get("message")
         kind = "a JSON object" + (f', GitHub\'s message "{reviews_mod._shown(message, 80)}"' if isinstance(message, str) else "")
     else:
         kind = "a string" if isinstance(value, str) else "true or false" if isinstance(value, bool) else "null" if value is None else "a number"
-    raise InputUnreadable(None, f"it isn't a list of {what} (it is {kind})", path)
+    return f"it isn't a list of {what} (it is {kind})"
 
 
 def _out(obj) -> None:
@@ -227,6 +243,11 @@ class TooDeep(ValueError):
     """`_fetch_items` met lists nested deeper than its `deepest`."""
 
 
+class NotAnObject(ValueError):
+    """`_fetch_items` met, with `only_objects`, something that is neither a
+    list nor an object."""
+
+
 def _gave(repo: str, what: str) -> str:
     """What `_fetch` read, as its refusals name it: the repo shown escaped
     (`reviews._shown`), so the line stays one line (#775)."""
@@ -248,7 +269,9 @@ def _fetch(repo: str, what: str) -> list[dict]:
     pages one after another with `posts.decode_values`), its pages
     flattened without recursion. Read page by page, only lists nested too
     deeply that Python's own reader can read raise it; that route's other
-    refusals are #810's.
+    refusals are #810's. On every route, a page that isn't a list of objects,
+    or pages of them, raises it too, with the reason `_issues_file` gives a
+    file (`_not_a_list`, #789).
     """
     path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
 
@@ -261,34 +284,45 @@ def _fetch(repo: str, what: str) -> list[dict]:
         except fetch_mod.GhError as e:
             raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
 
-    def items(values) -> list[dict]:
+    def items(pages) -> list[dict]:
+        """The objects in `pages`, each page as `gh` printed it, once each is
+        a list of objects, or pages of them (#789)."""
+        for page in pages:
+            why = _not_a_list(page, "issues" if what == "issues" else "pull requests", objects)
+            if why:
+                raise FetchUnreadable(_gave(repo, what), why)
         try:
-            return _fetch_items(values, deepest=FETCH_DEPTH)
+            return _fetch_items(pages, deepest=FETCH_DEPTH)
         except TooDeep:
             raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
 
+    def objects(page: list) -> bool:  # however deep its lists nest, nothing but objects in them
+        try:
+            _fetch_items(page, only_objects=True)
+        except NotAnObject:
+            return False
+        return True
+
     p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
-    values: list = []
     if p.returncode == 0:
         value, why = doctor_mod._parse_json(p.stdout if p.stdout.strip() else "[]")  # no output: no pages
         if why:
             raise FetchUnreadable(_gave(repo, what), why)
-        values = [value]
-    elif fetch_mod.numeric_refused(p, path):
-        values = by_page()
-    elif "slurp" in (p.stderr + p.stdout).lower():
-        p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
-        if fetch_mod.numeric_refused(p, path):
-            return items(by_page())
-        if p.returncode:
-            raise failed(p)
-        try:
-            values = posts_mod.decode_values(p.stdout)
-        except posts_mod.CommentsError as e:
-            raise FetchUnreadable(_gave(repo, what), f"it can't be read ({e})") from None
-    else:
+        return items([value])  # its pages in one list, as `_issues_file` reads a file's
+    if fetch_mod.numeric_refused(p, path):
+        return items(by_page())
+    if "slurp" not in (p.stderr + p.stdout).lower():
         raise failed(p)
-    return items(values)
+    p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
+    if fetch_mod.numeric_refused(p, path):
+        return items(by_page())
+    if p.returncode:
+        raise failed(p)
+    try:
+        pages = posts_mod.decode_values(p.stdout)
+    except posts_mod.CommentsError as e:
+        raise FetchUnreadable(_gave(repo, what), f"it can't be read ({e})") from None
+    return items(pages)
 
 
 def _unnumbered(items: list[dict], what: str) -> str | None:
@@ -299,10 +333,12 @@ def _unnumbered(items: list[dict], what: str) -> str | None:
     return f"{what}: {n} of {len(items)} {'has' if n == 1 else 'have'} no whole-number number" if n else None
 
 
-def _fetch_items(values, deepest: int | None = None) -> list[dict]:
+def _fetch_items(values, deepest: int | None = None, only_objects: bool = False) -> list[dict]:
     """The objects in `_fetch`'s pages, in order, however deep the lists nest,
     read without recursion (#788). With `deepest`, lists nested deeper than
-    that raise `TooDeep`."""
+    that raise `TooDeep`; with `only_objects`, anything in them that isn't a
+    list or an object raises `NotAnObject` (#789), where it is otherwise left
+    out."""
     items: list[dict] = []
     done = object()
     stack = [(iter([values]), 0)]  # each list being read, and how deep it is
@@ -317,6 +353,8 @@ def _fetch_items(values, deepest: int | None = None) -> list[dict]:
             stack.append((iter(v), depth + 1))
         elif isinstance(v, dict):
             items.append(v)
+        elif only_objects:
+            raise NotAnObject(f"{type(v).__name__} in the lists")
     return items
 
 
