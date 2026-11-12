@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow ready`'s text shows a lone surrogate as its escape, never a traceback** (#785, found in the review of #774's pull request). `workflow ready --issues F --prs G` without `--json` printed each ticket's line as it was: a `ready-for-agent` build ticket whose title held a lone surrogate (half a surrogate pair, written in the JSON as `"bad \ud800 title"`) ended it in `UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800'`, a traceback, exit 1. A `note:` line naming a protected path written with one in the ticket's body, or a waiting ticket's reason quoting a blocker's `state_reason` holding one, did the same. #774 fixed this failure in `workflow status`'s text.
+
+- **Shown as the escape now,** through `issues.escape_surrogates` (#774): each ticket's line and each `note:` line, so the ticket is listed with `\ud800` where the lone surrogate was. An `Area:` line holding one never ended in a traceback: the area is read as one word without it, and the note about the line quotes it escaped.
+- **Only lone surrogates change:** other text, an emoji and a tab among it, is printed as before (#797 covers the rest of this output's title handling), and `--json` is unchanged.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_ready_surrogates.py`.
+
 **The try-it link reader sorts a comment whose id is a bool as one with no readable id** (#784, found in the review of #773's pull request). `workflow preview`'s reader (`_bot_rows` in `previews.py`) broke a tie between two of Cloudflare's comments updated at the same moment by their ids, taking an id with `isinstance(id, int)`, which Python passes for a bool: a comment whose `id` is `true` sorted as id 1, ahead of one whose id couldn't be read, so its row could be taken as the newest.
 
 - **Read as no id now,** through `issues.is_whole` (#773): a comment whose `id` is `true` or `false` sorts with key 0, as one with no whole-number id does. Comments with whole-number ids sort as before, the higher id first.
