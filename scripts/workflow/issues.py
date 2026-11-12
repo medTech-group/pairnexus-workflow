@@ -68,6 +68,17 @@ def is_whole(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def escape_surrogates(text: str) -> str:
+    """The text with each lone surrogate (half a pair, as JSON's `\\ud800`
+    gives it) written as JSON escapes it, `\\ud800`: UTF-8 can't encode one,
+    so printing it ends in a traceback. Everything else is left as it is
+    (#774)."""
+    return _SURROGATE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
+
+
 def labels_of(issue: dict) -> set[str]:
     """The issue's labels, casefolded, as GitHub matches them: names, or
     objects with a text `name`. A label of any other type is read past, the

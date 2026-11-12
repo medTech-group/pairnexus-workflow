@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow status`'s text no longer ends in a traceback on a title it can't print** (#774, found in the review of #770's pull request). `workflow status --issues F --prs G` without `--json` ended in `UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800'`, exit 1, when an issue's or pull request's title, or a pull request's branch (`head.ref`), held a lone surrogate: half a surrogate pair, written in the JSON as an escape such as `"bad \ud800 title"`. `--json` was fine.
+
+- **Shown as its escape now:** the item is listed, the lone surrogate written as JSON writes it (`- #1 bad \ud800 title`). The text from `--fetch` reads the same way. Everything else in the text, and `--json`, is unchanged.
+- **One shared escape:** `escape_surrogates` in `scripts/workflow/issues.py`, which `protection.printable` (the protection report's) now calls rather than keeping its own copy; the architecture page lists it under its helpers.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_status_surrogates.py`.
+
 **One shared whole-number check** (#773, found in the review of #770's pull request). `status._whole` (#770) checked that a value is a whole number (an `int` that isn't a `bool`), a copy of the same check in `state._int`, `doctor._number`, `merge.py`, `presets.py`, `charter.py` and ten more of the kit's modules, `issues.py`, `profile.py` and `protection.py` among them. They all call `is_whole` in `scripts/workflow/issues.py` now, each adding its own range; the architecture page lists it under its helpers.
 
 - **What it reads:** `3` and `-2` are whole numbers; `True`, `3.0`, `"3"` and None aren't, as before. What every command accepts and refuses is unchanged.
