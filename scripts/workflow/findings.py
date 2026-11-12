@@ -303,7 +303,7 @@ def _flag(value, where: str, key: str) -> bool:
 
 
 def _finding_number(value, where: str) -> int:
-    if type(value) is not int or not 1 <= value <= MAX_ITEMS:
+    if not issues_mod.is_whole(value) or not 1 <= value <= MAX_ITEMS:
         raise FindingsError(f"{where}: `finding` is the number of the last review's finding, from 1 to {MAX_ITEMS}, not {_json(value)}")
     return value
 

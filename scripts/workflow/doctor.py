@@ -1931,7 +1931,7 @@ def _open_prs(i: Inputs) -> _Answer:
                 prs = estimate_mod._flatten(answer.value)
             except RecursionError:  # nested deeper than any list of pages
                 prs = [None]
-            if all(isinstance(pr, dict) and isinstance(pr.get("number"), int) and not isinstance(pr.get("number"), bool) and pr["number"] > 0 for pr in prs):
+            if all(isinstance(pr, dict) and issues_mod.is_whole(pr.get("number")) and pr["number"] > 0 for pr in prs):
                 answer = _Answer(prs)
             else:
                 answer = _Answer(why=Words(
@@ -2531,7 +2531,7 @@ def _items(value, key: str) -> list[dict] | None:
     if not all(isinstance(p, dict) and isinstance(p.get(key), list) for p in pages):
         return None
     items = [x for p in pages for x in p[key]]
-    totals = [p["total_count"] for p in pages if isinstance(p.get("total_count"), int) and not isinstance(p.get("total_count"), bool)]
+    totals = [p["total_count"] for p in pages if issues_mod.is_whole(p.get("total_count"))]
     if totals and len(items) < max(totals):
         return None
     return items if all(isinstance(x, dict) for x in items) else None

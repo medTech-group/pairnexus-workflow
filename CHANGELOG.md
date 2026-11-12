@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**One shared whole-number check** (#773, found in the review of #770's pull request). `status._whole` (#770) checked that a value is a whole number (an `int` that isn't a `bool`), a copy of the same check in `state._int`, `doctor._number`, `merge.py`, `presets.py`, `charter.py` and seven more of the kit's modules, `issues.py` among them. They all call `is_whole` in `scripts/workflow/issues.py` now, each adding its own range; the architecture page lists it under its helpers.
+**One shared whole-number check** (#773, found in the review of #770's pull request). `status._whole` (#770) checked that a value is a whole number (an `int` that isn't a `bool`), a copy of the same check in `state._int`, `doctor._number`, `merge.py`, `presets.py`, `charter.py` and ten more of the kit's modules, `issues.py`, `profile.py` and `protection.py` among them. They all call `is_whole` in `scripts/workflow/issues.py` now, each adding its own range; the architecture page lists it under its helpers.
 
 - **What it reads:** `3` and `-2` are whole numbers; `True`, `3.0`, `"3"` and None aren't, as before. What every command accepts and refuses is unchanged.
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_is_whole.py`.

@@ -357,7 +357,7 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
             raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
         return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins, token))
 
-    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and type(p.get("number")) is int] if isinstance(prs, list) else []
+    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and issues_mod.is_whole(p.get("number"))] if isinstance(prs, list) else []
     issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions, pull_numbers=pull_numbers)
 
 
