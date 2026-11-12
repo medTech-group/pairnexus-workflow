@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from changelog_notes import entry
 from workflow import cli
 
 
@@ -162,3 +163,17 @@ def test_ready_reads_both_files_through_the_status_helper():
     src = inspect.getsource(cli.cmd_ready)
     assert '_issues_file(a.issues, "issues")' in src and '_issues_file(a.prs, "pull requests")' in src
     assert "_json(a.issues)" not in src and "_json(a.prs)" not in src
+
+
+# ---------- the changelog note ----------
+
+
+def test_the_changelog_note_names_each_old_traceback():
+    """Before #779, the pages ended in `list indices ...` and GitHub's error
+    object in `string indices ...` (its keys iterated as issues)."""
+    note = entry("#779, found in the review of #772's pull request")
+    first = note.split("\n\n")[0]
+    pages = first.index("list indices must be integers or slices, not str")
+    error_object = first.index("string indices must be integers, not 'str'")
+    assert first.index("--paginate --slurp") < pages
+    assert first.index("Bad credentials") < error_object
