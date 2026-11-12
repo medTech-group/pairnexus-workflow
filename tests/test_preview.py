@@ -785,3 +785,14 @@ def test_the_sort_key_reads_ids_through_is_whole(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(issues, "is_whole", lambda v: seen.append(v) or real(v))
     preview(tmp_path, capsys, [bot(row(), cid=501), bot(row(), cid=502)], checks(cf_run()))
     assert {501, 502} <= set(seen)
+
+
+def test_the_sort_key_reads_ids_through_protections_id_reader(monkeypatch, tmp_path, capsys):
+    # One "id, or 0" reader for comments and check runs alike, never a copy of it.
+    from workflow import protection
+
+    seen = []
+    real = protection._id
+    monkeypatch.setattr(protection, "_id", lambda c: seen.append(c.get("id")) or real(c))
+    preview(tmp_path, capsys, [bot(row(), cid=501), bot(row(), cid=502)], checks(cf_run()))
+    assert {501, 502} <= set(seen)
