@@ -753,3 +753,46 @@ def test_a_url_inside_a_tag_isnt_the_link(tmp_path, capsys, cell):
 def test_a_markdown_autolink_is_read(tmp_path, capsys):
     got, _, _ = preview(tmp_path, capsys, [bot(row(links=f"<{BRANCH_URL}>"))], checks(cf_run()))
     assert got == answer("built", BRANCH_URL)
+
+
+# ---------- #784: the comment-id sort key reads ids through issues.is_whole ----------
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_a_comment_whose_id_is_a_bool_sorts_as_one_with_no_readable_id(tmp_path, capsys, flag):
+    # Two bot comments updated at the same moment: the id breaks the tie, newest first. A bool id
+    # is no id (key 0), so it never outranks one whose id is 0; the tie keeps the order given.
+    unread = bot(row(), cid=0)
+    flagged = {**bot(row("❌ Deployment failed", links=""), cid=0), "id": flag}
+    got, code, _ = preview(tmp_path, capsys, [unread, flagged], checks(cf_run()))
+    assert code == 0
+    assert got == answer("built", BRANCH_URL)
+
+
+def test_comments_with_whole_number_ids_still_sort_newest_id_first(tmp_path, capsys):
+    older = bot(row("❌ Deployment failed", links=""), cid=501)
+    newer = bot(row(), cid=502)
+    for order in ([older, newer], [newer, older]):
+        got, _, _ = preview(tmp_path, capsys, order, checks(cf_run()))
+        assert got == answer("built", BRANCH_URL)
+
+
+def test_the_sort_key_reads_ids_through_is_whole(monkeypatch, tmp_path, capsys):
+    from workflow import issues
+
+    seen = []
+    real = issues.is_whole
+    monkeypatch.setattr(issues, "is_whole", lambda v: seen.append(v) or real(v))
+    preview(tmp_path, capsys, [bot(row(), cid=501), bot(row(), cid=502)], checks(cf_run()))
+    assert {501, 502} <= set(seen)
+
+
+def test_the_sort_key_reads_ids_through_protections_id_reader(monkeypatch, tmp_path, capsys):
+    # One "id, or 0" reader for comments and check runs alike, never a copy of it.
+    from workflow import protection
+
+    seen = []
+    real = protection._id
+    monkeypatch.setattr(protection, "_id", lambda c: seen.append(c.get("id")) or real(c))
+    preview(tmp_path, capsys, [bot(row(), cid=501), bot(row(), cid=502)], checks(cf_run()))
+    assert {501, 502} <= set(seen)

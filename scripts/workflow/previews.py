@@ -278,7 +278,7 @@ def _bot_rows(value, head: str) -> tuple[bool, list[Row]]:
     by_bot = [c for c in comments if _is_bot(c)]
     if not by_bot:
         return False, []
-    by_bot.sort(key=lambda c: (_when(c), c.get("id") if isinstance(c.get("id"), int) else 0), reverse=True)
+    by_bot.sort(key=lambda c: (_when(c), protection._id(c)), reverse=True)
     tables = [_rows(c.get("body") or "") for c in by_bot]
     if all(t is None for t in tables):
         raise _unknown("it has no table the reader knows (Status, Latest Commit and Preview URL columns)")
