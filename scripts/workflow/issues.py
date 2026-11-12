@@ -79,6 +79,22 @@ def escape_surrogates(text: str) -> str:
     return _SURROGATE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
 
 
+# Control characters (C0, DEL, C1), the line and paragraph separators, and the
+# bidirectional embeddings, overrides and isolates: each could start a line, or
+# be acted on by a terminal, if printed as it is (#776).
+_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+_NAMED = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def escape_controls(text: str) -> str:
+    """Untrusted text (an issue's title, a branch) as a terminal may show it:
+    each control character, line or paragraph separator and bidirectional
+    override written as JSON escapes it (`\\n`, `\\u001b`), so it can't
+    add a line or send an escape code; everything else, text outside ASCII
+    and a lone surrogate among it, is left as it is (#776)."""
+    return _CONTROL.sub(lambda m: _NAMED.get(m.group()) or f"\\u{ord(m.group()):04x}", text)
+
+
 def labels_of(issue: dict) -> set[str]:
     """The issue's labels, casefolded, as GitHub matches them: names, or
     objects with a text `name`. A label of any other type is read past, the

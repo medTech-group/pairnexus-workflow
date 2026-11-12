@@ -62,12 +62,13 @@ def test_a_pull_requests_title_with_a_lone_surrogate_is_listed(monkeypatch, caps
 
 
 def test_printable_text_is_unchanged(monkeypatch, capsys, tmp_path):
-    """Only lone surrogates change: other text, an emoji (a surrogate pair in
-    the JSON) and a control character among it, is left as it was (#776 owns
-    the rest of this output's handling)."""
+    """A lone surrogate is the only change of #774's: other text, an emoji (a
+    surrogate pair in the JSON), is left as it was. A control character among
+    it, a tab here, is shown as its escape since #776
+    (`tests/test_status_control_chars.py`)."""
     issues = '[{"number": 1, "title": "caf\\u00e9 \\ud83d\\ude00 tab\\there", "state": "open", "labels": []}]'
     out = _status(monkeypatch, capsys, tmp_path, issues, "[]")
-    assert "- #1 café \U0001F600 tab\there" in out.splitlines()
+    assert "- #1 café \U0001F600 tab\\there" in out.splitlines()
 
 
 def test_json_output_is_unchanged(monkeypatch, capsys, tmp_path):
