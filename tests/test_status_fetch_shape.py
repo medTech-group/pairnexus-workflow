@@ -51,9 +51,10 @@ def _project(monkeypatch, tmp_path):
         monkeypatch.delenv(k, raising=False)
 
 
-def _answer(v):
-    """Text `gh` prints with exit 0, or a list of items as its pages."""
-    return fake_gh.reply(v) if isinstance(v, str) else fake_gh.pages(v)
+def _answer(case: str) -> dict:
+    """The ticket's answer `case` as a real `gh` prints it: one page, which
+    `--paginate --slurp` prints in a list of the pages, an old `gh` as it is."""
+    return fake_gh.pages(json.loads(ANSWERS[case]))
 
 
 def _refused(monkeypatch, capsys, tmp_path, routes: dict, *args, slurp: bool = True) -> str:
@@ -96,7 +97,7 @@ def _file_reason(monkeypatch, capsys, tmp_path, issues: str, prs: str = None) ->
 def test_an_answer_that_isnt_a_list_of_issues_is_refused_as_the_file_is(monkeypatch, capsys, tmp_path, case):
     """Each of the ticket's answers is refused in one line, with the reason
     the same text gets as an `--issues` file."""
-    line = _refused(monkeypatch, capsys, tmp_path / "fetch", {"repos/acme/demo/issues": fake_gh.reply(ANSWERS[case]),
+    line = _refused(monkeypatch, capsys, tmp_path / "fetch", {"repos/acme/demo/issues": _answer(case),
                                                               "repos/acme/demo/pulls": fake_gh.pages([PR])})
     assert line == f"workflow: can't read {GAVE['issues']}: {REASONS[case]}{INSTEAD}"
     assert line == f"workflow: can't read {GAVE['issues']}: {_file_reason(monkeypatch, capsys, tmp_path / 'file', ANSWERS[case])}{INSTEAD}"
@@ -104,7 +105,7 @@ def test_an_answer_that_isnt_a_list_of_issues_is_refused_as_the_file_is(monkeypa
 
 def test_githubs_error_object_is_named_by_its_message_not_counted_as_an_issue(monkeypatch, capsys, tmp_path):
     """#775 counted it as an issue with no number; it is GitHub's message."""
-    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": fake_gh.reply(ANSWERS["error"]),
+    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": _answer("error"),
                                                     "repos/acme/demo/pulls": fake_gh.pages([PR])})
     assert "Bad credentials" in line
     assert "no whole-number number" not in line
@@ -114,7 +115,7 @@ def test_githubs_error_object_is_named_by_its_message_not_counted_as_an_issue(mo
 def test_a_gh_without_slurp_is_refused_the_same_way(monkeypatch, capsys, tmp_path, case):
     """An old `gh` prints its pages one after another: a page that isn't a
     list of issues is refused with the same reason."""
-    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": fake_gh.reply(ANSWERS[case]),
+    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": _answer(case),
                                                     "repos/acme/demo/pulls": fake_gh.pages([PR])}, slurp=False)
     assert line == f"workflow: can't read {GAVE['issues']}: {REASONS[case]}{INSTEAD}"
 
@@ -135,21 +136,53 @@ def test_the_page_by_page_route_is_refused_the_same_way(monkeypatch, capsys, tmp
 @pytest.mark.parametrize("case", list(ANSWERS))
 def test_the_pull_requests_are_refused_the_same_way(monkeypatch, capsys, tmp_path, case):
     line = _refused(monkeypatch, capsys, tmp_path / "fetch", {"repos/acme/demo/issues": fake_gh.pages([ISSUE]),
-                                                              "repos/acme/demo/pulls": fake_gh.reply(ANSWERS[case])})
+                                                              "repos/acme/demo/pulls": _answer(case)})
     reason = REASONS[case].replace("issues", "pull requests")
     assert line == f"workflow: can't read {GAVE['pulls']}: {reason}{INSTEAD}"
     file_reason = _file_reason(monkeypatch, capsys, tmp_path / "file", json.dumps([ISSUE]), ANSWERS[case])
     assert line == f"workflow: can't read {GAVE['pulls']}: {file_reason}{INSTEAD}"
 
 
-@pytest.mark.parametrize("text", ['[[{"number": 12}], ["page"]]', "[[null]]", '[[[[{"number": 12}, 5]]]]', "[true]"],
+@pytest.mark.parametrize("pages", [([{"number": 12}], ["page"]), ([None],), ([[[{"number": 12}, 5]]],), ([True],)],
                          ids=["a-page-of-strings", "null", "deep", "true"])
-def test_anything_but_an_object_in_the_pages_is_refused(monkeypatch, capsys, tmp_path, text):
+def test_anything_but_an_object_in_the_pages_is_refused(monkeypatch, capsys, tmp_path, pages):
     """However deep `gh`'s lists nest within the limit (#788), every entry
     must be an object."""
-    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": fake_gh.reply(text),
+    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": fake_gh.pages(*pages),
                                                     "repos/acme/demo/pulls": fake_gh.pages([PR])})
     assert line == f"workflow: can't read {GAVE['issues']}: {REASONS['mixed']}{INSTEAD}"
+
+
+# What a real `gh --paginate --slurp` prints: a list of the pages, a page
+# that isn't a list among them (#789's round 1).
+SLURPED = {
+    "error": ((json.loads(ANSWERS["error"]),), REASONS["error"]),
+    "error-after-a-full-page": (([{**ISSUE, "number": n} for n in range(1, 101)], json.loads(ANSWERS["error"])), REASONS["error"]),
+    "number": ((5,), REASONS["number"]),
+    "string": (("hello",), REASONS["string"]),
+    "null": ((None,), "it isn't a list of issues (it is null)"),
+    "true": ((True,), "it isn't a list of issues (it is true or false)"),
+}
+
+
+@pytest.mark.parametrize("case", list(SLURPED))
+def test_slurp_checks_each_page_it_prints(monkeypatch, capsys, tmp_path, case):
+    """`--slurp` prints its pages in one list: each page gets the check, as an
+    old `gh`'s pages do, so GitHub's error object as a page is named by its
+    message rather than counted as an issue with no number (#775)."""
+    pages, reason = SLURPED[case]
+    routes = {"repos/acme/demo/issues": fake_gh.pages(*pages), "repos/acme/demo/pulls": fake_gh.pages([PR])}
+    line = _refused(monkeypatch, capsys, tmp_path / "slurp", routes)
+    assert line == f"workflow: can't read {GAVE['issues']}: {reason}{INSTEAD}"
+    assert line == _refused(monkeypatch, capsys, tmp_path / "old-gh", routes, slurp=False)
+
+
+@pytest.mark.parametrize("command", [["status", "--fetch"], ["ready", "--fetch"]])
+def test_slurps_error_page_is_refused_by_status_and_ready(monkeypatch, capsys, tmp_path, command):
+    """`ready --fetch` ended in `KeyError: 'number'` on it."""
+    routes = {"repos/acme/demo/issues": fake_gh.pages(json.loads(ANSWERS["error"])), "repos/acme/demo/pulls": fake_gh.pages([PR])}
+    line = _refused(monkeypatch, capsys, tmp_path, routes, *command)
+    assert line == f"workflow: can't read {GAVE['issues']}: {REASONS['error']}{INSTEAD}"
 
 
 @pytest.mark.parametrize("case", ["number", "error"])
@@ -157,7 +190,7 @@ def test_the_process_prints_one_line_and_exits_1(tmp_path, case):
     """Run as a command: one line on standard error, exit 1, nothing else."""
     (tmp_path / ".claude/workflow").mkdir(parents=True)
     (tmp_path / ".claude/workflow/profile.toml").write_text('[project]\nname = "demo"\nrepo = "acme/demo"\n', encoding="utf-8")
-    gh = fake_gh.write(tmp_path / "bin", {"repos/acme/demo/issues": fake_gh.reply(ANSWERS[case]),
+    gh = fake_gh.write(tmp_path / "bin", {"repos/acme/demo/issues": _answer(case),
                                           "repos/acme/demo/pulls": fake_gh.pages([PR])})
     env = {**os.environ, "PATH": f"{gh.bin}{os.pathsep}{os.environ.get('PATH', '')}", "CLAUDE_PROJECT_DIR": str(tmp_path),
            "WORKFLOW_UPDATE_CHECK": "off"}
@@ -245,14 +278,14 @@ def test_neither_caller_tests_the_list_itself():
 
 
 def test_ready_fetch_is_refused_the_same_way(monkeypatch, capsys, tmp_path):
-    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": fake_gh.reply(ANSWERS["number"]),
+    line = _refused(monkeypatch, capsys, tmp_path, {"repos/acme/demo/issues": _answer("number"),
                                                     "repos/acme/demo/pulls": fake_gh.pages([PR])}, "ready", "--fetch")
     assert line == f"workflow: can't read {GAVE['issues']}: {REASONS['number']}{INSTEAD}"
 
 
 def test_state_join_fetch_names_its_own_flags(tmp_path):
     """`state join --fetch` keeps its own wording around the same reason."""
-    gh = fake_gh.write(tmp_path / "bin", {"repos/acme/demo/issues": fake_gh.reply(ANSWERS["error"])})
+    gh = fake_gh.write(tmp_path / "bin", {"repos/acme/demo/issues": _answer("error")})
     (tmp_path / ".claude/workflow").mkdir(parents=True)
     (tmp_path / ".claude/workflow/profile.toml").write_text(
         '[project]\nname = "demo"\nrepo = "acme/demo"\nowner = "owner-login"\n\n[areas]\nconductor = []\n', encoding="utf-8"
@@ -299,3 +332,12 @@ def test_the_changelog_says_only_the_depth_differs(monkeypatch, capsys, tmp_path
     _project(monkeypatch, tmp_path / "fetch")
     fake_gh.install(tmp_path / "fetch", monkeypatch, {"repos/acme/demo/issues": fake_gh.pages(json.loads(text)), "repos/acme/demo/pulls": fake_gh.pages([PR])})
     assert cli.main(["status", "--fetch"]) == 0, capsys.readouterr().err
+
+
+def test_the_texts_name_slurps_pages():
+    """The note, `_fetch`'s docstring and its architecture line say each page
+    `--slurp` prints in its list is checked, as the code does."""
+    said = "each page `--slurp` prints in its list"
+    assert said in " ".join(entry("#789, found in the review of #775's pull request").split())
+    assert said in " ".join(cli._fetch.__doc__.split())
+    assert said in (KIT / "docs/architecture/scripts--workflow.md").read_text()
