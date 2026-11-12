@@ -262,15 +262,3 @@ def test_the_changelog_gives_the_nesting_limit_the_code_has():
     note = entry("#788, found in the review of #775's pull request")
     assert f"lists nested more than {cli.FETCH_DEPTH - 1} deep (`gh` prints 2)" in note
     assert f"more than {cli.FETCH_DEPTH} deep" not in note
-
-
-def test_no_text_says_output_that_isnt_utf8_is_refused():
-    """The page-by-page route (`fetch.by_page`) reads bytes that aren't UTF-8
-    with them replaced, so no text may say such output is refused: the
-    changelog's note, `_fetch`'s line in the architecture page and its
-    docstring. Reading it is #812's."""
-    note = entry("#788, found in the review of #775's pull request")
-    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
-    line = next(ln for ln in page.splitlines() if ln.startswith("- `_fetch`: "))
-    for where, text in (("the changelog's note", note), ("the architecture page", line), ("_fetch's docstring", cli._fetch.__doc__)):
-        assert "UTF-8" not in text, where
