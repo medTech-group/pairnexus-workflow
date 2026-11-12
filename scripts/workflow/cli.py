@@ -285,6 +285,8 @@ def cmd_ready(a) -> int:
         if not a.issues or not a.prs:
             raise SystemExit("give --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
         issues, prs = _issues_file(a.issues, "issues"), _issues_file(a.prs, "pull requests")  # as `status` reads them (#779)
+    # Each field of the wrong type left out, as `status` reads it (#780).
+    issues, prs = [status_mod.as_read(i) for i in issues], [status_mod.as_read(p) for p in prs]
     verdicts = issues_mod.readiness(
         issues,
         prs,
