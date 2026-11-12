@@ -210,3 +210,9 @@ def test_the_changelog_has_the_note():
     note = entry("#780, found in the review of #772's pull request")
     assert "`status.as_read`" in note
     assert "`VERSION` is unchanged" in note
+
+
+def test_the_changelog_note_says_a_parent_whose_total_is_a_whole_number_stays_one():
+    note = entry("#780, found in the review of #772's pull request")
+    assert "whose `total` is one stays a parent" not in note
+    assert "a parent whose `total` is a whole number stays a parent" in note
