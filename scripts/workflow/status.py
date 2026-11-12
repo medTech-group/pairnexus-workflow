@@ -113,6 +113,50 @@ def item_path(body: str | None) -> str | None:
     return None if m is None else (m.group(1) or "")
 
 
+# The text fields `snapshot` reads, on an issue or a pull request (#770).
+_TEXTS = ("state", "state_reason", "title", "body")
+
+
+def _whole(v) -> bool:
+    return v is None or (isinstance(v, int) and not isinstance(v, bool))
+
+
+def as_read(item: dict) -> dict:
+    """The issue or pull request as `snapshot` reads it (#770): a copy with each
+    field it reads that holds the wrong type left out, so the item reads as it
+    would without that field, never a traceback. A label of the wrong type is
+    left out of the list, the others kept; a `sub_issues_summary` or
+    `issue_dependencies_summary` whose count isn't a whole number is left out
+    whole (its sub-issues unknown); a `pull_request` of the wrong type still
+    marks a pull request, read without its details. A null reads as missing,
+    as before, except a null `pull_request`, which still marks a pull request."""
+    out = dict(item)
+    for k in _TEXTS:
+        if not isinstance(out.get(k), (str, type(None))):
+            del out[k]
+    labels = out.get("labels")
+    if isinstance(labels, list):
+        out["labels"] = [
+            l for l in labels if isinstance(l, str) or (isinstance(l, dict) and isinstance(l.get("name"), (str, type(None))))
+        ]
+    elif labels is not None:
+        del out["labels"]
+    for k, counts in (("sub_issues_summary", ("total", "completed")), ("issue_dependencies_summary", ("blocked_by",))):
+        v = out.get(k)
+        if v is not None and not (isinstance(v, dict) and all(_whole(v.get(c)) for c in counts)):
+            del out[k]
+    if not isinstance(out.get("pull_request", {}), (dict, type(None))):
+        out["pull_request"] = {}
+    head = out.get("head")
+    if isinstance(head, dict) and not isinstance(head.get("ref"), (str, type(None))):
+        out["head"] = {k: v for k, v in head.items() if k != "ref"}
+    elif not isinstance(head, (dict, type(None))):
+        del out["head"]
+    if not isinstance(out.get("draft"), (bool, type(None))):
+        del out["draft"]
+    return out
+
+
 def _open(i: dict) -> bool:
     return (i.get("state") or "open").lower() == "open"
 
@@ -161,6 +205,7 @@ def snapshot(
     if issues is None or prs is None:
         return st
     st.issues_read = True
+    issues, prs = [as_read(i) for i in issues], [as_read(p) for p in prs]
     lab = issues_mod.labels_of
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
     for i in sorted((i for i in issues if "pull_request" not in i and _open(i)), key=lambda i: i["number"]):
