@@ -284,7 +284,7 @@ def cmd_ready(a) -> int:
     else:
         if not a.issues or not a.prs:
             raise SystemExit("give --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
-        issues, prs = _json(a.issues), _json(a.prs)
+        issues, prs = _issues_file(a.issues, "issues"), _issues_file(a.prs, "pull requests")  # as `status` reads them (#779)
     verdicts = issues_mod.readiness(
         issues,
         prs,
