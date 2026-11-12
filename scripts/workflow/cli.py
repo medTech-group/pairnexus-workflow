@@ -290,18 +290,17 @@ def _fetch(repo: str, what: str) -> list[dict]:
             raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
 
     def items(pages: list) -> list[dict]:
-        """The objects in `pages`, each value as `gh` printed it, once its
-        lists nest no deeper than `FETCH_DEPTH` (#788) and then each value is
-        a list of objects, or pages of them (#789)."""
-        try:
-            found = _fetch_items(pages, deepest=FETCH_DEPTH)
-        except TooDeep:
-            raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
+        """The objects in `pages`, each value as `gh` printed it, once each is
+        a list of objects, or pages of them (#789), and its lists nest no
+        deeper than `FETCH_DEPTH` (#788)."""
         for page in pages:
             why = _not_a_list(page, "issues" if what == "issues" else "pull requests")
             if why:
                 raise FetchUnreadable(_gave(repo, what), why)
-        return found
+        try:
+            return _fetch_items(pages, deepest=FETCH_DEPTH)
+        except TooDeep:
+            raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
 
     p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
     if p.returncode == 0:

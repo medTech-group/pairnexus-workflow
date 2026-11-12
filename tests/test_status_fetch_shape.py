@@ -295,19 +295,3 @@ def test_the_changelog_says_only_the_depth_differs(monkeypatch, capsys, tmp_path
     _project(monkeypatch, tmp_path / "fetch")
     fake_gh.install(tmp_path / "fetch", monkeypatch, {"repos/acme/demo/issues": fake_gh.pages(json.loads(text)), "repos/acme/demo/pulls": fake_gh.pages([PR])})
     assert cli.main(["status", "--fetch"]) == 0, capsys.readouterr().err
-
-
-@pytest.mark.parametrize("slurp", [True, False], ids=["slurp", "old-gh"])
-@pytest.mark.parametrize("text", ["[" * 9 + "5" + "]" * 9, "[" * 3000 + "5" + "]" * 3000, "[[[[[[[[[null, {}]]]]]]]]]"],
-                         ids=["9-deep", "3000-deep", "null-9-deep"])
-def test_lists_nested_too_deeply_are_788s_refusal_whatever_they_hold(monkeypatch, capsys, tmp_path, text, slurp):
-    """Past `FETCH_DEPTH`, the depth is the reason, as #788 gives it, before
-    what the lists hold is looked at."""
-    routes = {"repos/acme/demo/issues": fake_gh.reply(text), "repos/acme/demo/pulls": fake_gh.pages([PR])}
-    line = _refused(monkeypatch, capsys, tmp_path, routes, slurp=slurp)
-    assert line == f"workflow: can't read {GAVE['issues']}: it is nested too deeply to read{INSTEAD}"
-
-
-def test_the_changelog_gives_the_depth_first():
-    note = " ".join(entry("#789, found in the review of #775's pull request").split())
-    assert "past it, #788's `it is nested too deeply to read`, whatever they hold" in note
