@@ -242,7 +242,7 @@ def _fetch(repo: str, what: str) -> list[dict]:
     cloud session's proxy refuses the next-page link (#568), the pages are
     read one at a time (`fetch.by_page`). The issues list keeps its pull
     requests: readiness resolves a PR blocker by them. Output it can't read
-    (not UTF-8 text, not JSON, a number too long, lists nested too deeply) raises
+    (not JSON, a number too long, lists nested too deeply) raises
     `FetchUnreadable` (#788): read as `_issues_file` reads a file's
     (`doctor._parse_json`), its pages flattened without recursion.
     """
@@ -257,40 +257,29 @@ def _fetch(repo: str, what: str) -> list[dict]:
         except fetch_mod.GhError as e:
             raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
 
-    def run(args: list[str]) -> subprocess.CompletedProcess:
-        # UTF-8, bytes that aren't kept as escapes, so `text` refuses them
-        return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="surrogateescape")
-
-    def text(p) -> str:
-        try:
-            p.stdout.encode("utf-8")
-        except UnicodeEncodeError:
-            raise FetchUnreadable(_gave(repo, what), "it isn't UTF-8 text") from None
-        return p.stdout
-
     def items(values) -> list[dict]:
         try:
             return _fetch_items(values, deepest=FETCH_DEPTH)
         except TooDeep:
             raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
 
-    p = run(["gh", "api", "--paginate", "--slurp", path])
+    p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
     values: list = []
     if p.returncode == 0:
-        value, why = doctor_mod._parse_json(text(p) if p.stdout.strip() else "[]")  # no output: no pages
+        value, why = doctor_mod._parse_json(p.stdout if p.stdout.strip() else "[]")  # no output: no pages
         if why:
             raise FetchUnreadable(_gave(repo, what), why)
         values = [value]
     elif fetch_mod.numeric_refused(p, path):
         values = by_page()
     elif "slurp" in (p.stderr + p.stdout).lower():
-        p = run(["gh", "api", "--paginate", path])
+        p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
         if fetch_mod.numeric_refused(p, path):
             return items(by_page())
         if p.returncode:
             raise failed(p)
         try:
-            values = posts_mod.decode_values(text(p))
+            values = posts_mod.decode_values(p.stdout)
         except posts_mod.CommentsError as e:
             raise FetchUnreadable(_gave(repo, what), f"it can't be read ({e})") from None
     else:
