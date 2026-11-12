@@ -173,6 +173,34 @@ def test_the_pages_are_flattened_without_recursion():
     assert cli._fetch_items([deep, {"number": 2}, "x", [[{"number": 3}]]]) == [{"number": 1}, {"number": 2}, {"number": 3}]
 
 
+def _nested(depth: int) -> str:
+    """An in-progress issue in lists `depth` deep, as `gh` would print them."""
+    return "[" * depth + json.dumps({**ISSUE, "labels": [{"name": "workflow:in-progress"}]}) + "]" * depth
+
+
+@pytest.mark.parametrize("slurp", [True, False], ids=["slurp", "old-gh"])
+@pytest.mark.parametrize("route", ["issues", "pulls"])
+def test_the_nesting_limit_is_counted_on_what_gh_prints(monkeypatch, capsys, tmp_path, slurp, route):
+    """`gh`'s output 7 lists deep is read, 8 deep refused (`FETCH_DEPTH`
+    counts the list `_fetch` holds it in), the same with or without
+    `--slurp`, for the issues and the pull requests."""
+    deepest = cli.FETCH_DEPTH - 1
+    assert deepest == 7
+    read = {"issues": (_nested(deepest), None), "pulls": ([ISSUE], _nested(deepest))}[route]
+    _project(monkeypatch, tmp_path)
+    fake_gh.install(tmp_path, monkeypatch, _routes(*read), slurp=slurp)
+    code = cli.main(["status", "--fetch", "--json"])
+    out = capsys.readouterr()
+    assert code == 0, out.err
+    assert json.loads(out.out)["issues_read"] is True
+    if route == "issues":
+        assert [i["number"] for i in json.loads(out.out)["in_progress"]] == [12]
+    refused = {"issues": (_nested(deepest + 1), None), "pulls": ([ISSUE], _nested(deepest + 1))}[route]
+    line = _refused(monkeypatch, capsys, tmp_path / "again", *refused, slurp=slurp)
+    what = "issues `gh api repos/acme/demo/issues`" if route == "issues" else "pull requests `gh api repos/acme/demo/pulls`"
+    assert line == f"workflow: can't read the {what} gave: it is nested too deeply to read" + INSTEAD
+
+
 def test_a_limit_refuses_lists_nested_deeper():
     with pytest.raises(cli.TooDeep):
         cli._fetch_items([[[[{"number": 1}]]]], deepest=3)
@@ -225,3 +253,12 @@ def test_the_changelog_says_what_changed():
     assert "workflow status --fetch" in note
     assert "`VERSION` is unchanged" in note
     assert "tests/test_status_fetch_unreadable.py" in note
+
+
+def test_the_changelog_gives_the_nesting_limit_the_code_has():
+    """The note counts what `gh` prints: the code reads it up to
+    `FETCH_DEPTH - 1` lists deep, since `FETCH_DEPTH` counts the list
+    `_fetch` holds it in."""
+    note = entry("#788, found in the review of #775's pull request")
+    assert f"lists nested more than {cli.FETCH_DEPTH - 1} deep (`gh` prints 2)" in note
+    assert f"more than {cli.FETCH_DEPTH} deep" not in note

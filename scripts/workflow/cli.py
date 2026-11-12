@@ -206,6 +206,7 @@ def _print_text(text: str, file=None) -> None:
 
 # How deep `_fetch` reads lists: `--paginate --slurp`'s pages of items, as
 # `_fetch` wraps them, are three; past this, it isn't what `gh` prints (#788).
+# It counts that wrapping list, so `gh`'s own output is read up to 7 deep.
 FETCH_DEPTH = 8
 # What `_fetch`'s refusals suggest instead.
 FETCH_INSTEAD = "fetch them with the GitHub MCP tools and give --issues and --prs files instead"
