@@ -16,9 +16,9 @@ ISSUE = {"number": 12, "title": "Add notes", "state": "open", "labels": [], "bod
 PR = {"number": 30, "title": "Notes list", "state": "open", "head": {"ref": "claude/build-12"}}
 
 
-def _project(monkeypatch, tmp_path):
+def _project(monkeypatch, tmp_path, repo_toml: str = '"acme/demo"'):
     (tmp_path / ".claude/workflow").mkdir(parents=True)
-    (tmp_path / ".claude/workflow/profile.toml").write_text('[project]\nname = "demo"\nrepo = "acme/demo"\n', encoding="utf-8")
+    (tmp_path / ".claude/workflow/profile.toml").write_text(f'[project]\nname = "demo"\nrepo = {repo_toml}\n', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("WORKFLOW_UPDATE_CHECK", "off")
@@ -96,6 +96,45 @@ def test_a_gh_without_slurp_is_read_the_same_way(monkeypatch, capsys, tmp_path):
     """An old `gh` prints the pages one after another (`posts.decode_values`)."""
     line = _refused(monkeypatch, capsys, tmp_path, [{"title": "no number"}], slurp=False)
     assert "1 of 1 has no whole-number number" in line
+
+
+# ---------- the repo, as the refusal shows it ----------
+
+
+@pytest.mark.parametrize(
+    "repo_toml, repo, shown",
+    [
+        ('"acme/de\\nmo"', "acme/de\nmo", "acme/de\\nmo"),
+        ('"acme/de`mo"', "acme/de`mo", "acme/de\\`mo"),
+        ('"acme/de\\u202Emo"', "acme/de‮mo", "acme/de\\u202emo"),
+    ],
+    ids=["newline", "backtick", "right-to-left-override"],
+)
+def test_the_repo_is_shown_escaped(monkeypatch, capsys, tmp_path, repo_toml, repo, shown):
+    """The profile's `project.repo` needs only one `/`: a control character or a
+    backtick in it is shown escaped (`reviews._shown`), so the refusal stays one
+    line and its code span stays whole."""
+    _project(monkeypatch, tmp_path, repo_toml)
+    no_number = [{"title": "no number"}]
+    routes = {f"repos/{repo}/issues": fake_gh.pages(no_number), f"repos/{repo}/pulls": fake_gh.pages([PR])}
+    fake_gh.install(tmp_path, monkeypatch, routes)
+    code = cli.main(["status", "--fetch"])
+    err = capsys.readouterr().err
+    assert code == 1, err
+    lines = err.strip().splitlines()
+    assert len(lines) == 1, err
+    assert lines[0].startswith(f"workflow: can't read the issues `gh api repos/{shown}/issues` gave: 1 of 1 has no"), lines[0]
+    assert repo not in lines[0]
+
+
+def test_the_pull_requests_repo_is_shown_escaped_too(monkeypatch, capsys, tmp_path):
+    _project(monkeypatch, tmp_path, '"acme/de`mo"')
+    routes = {"repos/acme/de`mo/issues": fake_gh.pages([ISSUE]), "repos/acme/de`mo/pulls": fake_gh.pages([{"title": "x"}])}
+    fake_gh.install(tmp_path, monkeypatch, routes)
+    code = cli.main(["status", "--fetch"])
+    err = capsys.readouterr().err
+    assert code == 1, err
+    assert "the pull requests `gh api repos/acme/de\\`mo/pulls` gave: 1 of 1 has no" in err
 
 
 # ---------- what it still takes ----------

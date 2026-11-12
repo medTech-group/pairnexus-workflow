@@ -393,8 +393,9 @@ def _status(a) -> int:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
             issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
-            why = _unnumbered(issues, f"the issues `gh api repos/{prof.repo}/issues` gave") or _unnumbered(
-                prs, f"the pull requests `gh api repos/{prof.repo}/pulls` gave"
+            repo = reviews_mod._shown(prof.repo, len(prof.repo))
+            why = _unnumbered(issues, f"the issues `gh api repos/{repo}/issues` gave") or _unnumbered(
+                prs, f"the pull requests `gh api repos/{repo}/pulls` gave"
             )
             if why:
                 print(f"workflow: can't read {why} (fetch them with the GitHub MCP tools and give --issues and --prs files instead)", file=sys.stderr)
