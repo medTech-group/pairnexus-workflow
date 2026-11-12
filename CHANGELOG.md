@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow ready` reads past an issue's or pull request's field of the wrong type** (#780, found in the review of #772's pull request). `workflow ready --issues F --prs G` ended in a traceback when an item's field had the wrong type: `{"number": 1, "title": "A", "state": 5, ...}` in `AttributeError: 'int' object has no attribute 'lower'` (in `issues.readiness`), and likewise a `title` or `body` that isn't text, a ticket's `"sub_issues_summary": {"total": "3"}` or `"issue_dependencies_summary": {"blocked_by": "1"}`, or a pull request's `"body": 5`. `workflow status` has read past these since #770; `ready` read the raw items.
+
+- **Read past now,** through `status.as_read`, the reader `workflow status` uses: each field of the wrong type is left out, so the item reads as it would without it, in the text and in `--json` alike, from `--issues` and `--prs` files and `--fetch`. A sub-issue or dependency summary loses only its count that isn't a whole number, so a parent whose `total` is a whole number stays a parent, never a ticket to start (`{"total": 3, "completed": "1"}` reads as `{"total": 3}`; `workflow status` leaves such a summary out whole, so a spec's tickets read as unknown and a parent that isn't a spec reads as a build ticket (#799)), and a `pull_request` of the wrong type still marks a pull request, read without its details (a blocker closed without merging). Labels of the wrong type were already read past (#772).
+- **An issue without a `state`** is left out of `ready`'s lists, as before: `ready` lists only issues that say they are open, so one whose `state` is `5` is left out too.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_ready_field_types.py`.
+
 **`workflow ready` reads its `--issues` and `--prs` files as `workflow status` does** (#779, found in the review of #772's pull request). `workflow ready --issues F --prs G` read both files with `json.loads` alone: given `gh api --paginate --slurp`'s pages of issues (`[[{...}, ...], [...]]`), it ended in `TypeError: list indices must be integers or slices, not str` (in `issues.readiness`); given GitHub's error object (`{"message": "Bad credentials", ...}`), in `TypeError: string indices must be integers, not 'str'` (there too); given a file that wasn't JSON, or an empty one, in a `JSONDecodeError` traceback.
 
 - **Pages now:** `--paginate --slurp`'s pages are flattened, as `--fetch` reads them, so two pages give the same answer as one list. A byte order mark at the start is read past.
