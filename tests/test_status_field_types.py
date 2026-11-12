@@ -5,6 +5,7 @@ without that field, never a traceback. Run through `cli.main`.
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -166,6 +167,13 @@ def test_the_changelog_note_says_a_null_pull_request_still_marks_one():
     note = entry("#770, found in the review of #757's pull request")
     assert "A null reads as missing, as before." not in note
     assert "except a null `pull_request`, which still marks a pull request" in note
+
+
+def test_the_architecture_line_says_a_summary_with_a_bad_count_is_left_out_whole():
+    page = (Path(__file__).resolve().parents[1] / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    line = next(l for l in page.splitlines() if l.startswith("- `as_read`:"))
+    assert "the sub-issue and dependency summaries' counts" not in line
+    assert "a sub-issue or dependency summary whose count isn't a whole number, left out whole" in line
 
 
 PR_CASES = [
