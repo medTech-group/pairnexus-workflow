@@ -124,8 +124,9 @@ def _whole(v) -> bool:
 def as_read(item: dict) -> dict:
     """The issue or pull request as `snapshot` reads it (#770): a copy with each
     field it reads that holds the wrong type left out, so the item reads as it
-    would without that field, never a traceback. A label of the wrong type is
-    left out of the list, the others kept; a `sub_issues_summary` or
+    would without that field, never a traceback. Labels are left as they are:
+    `issues.labels_of`, which `status` reads them through, reads past a label
+    of the wrong type (#772). A `sub_issues_summary` or
     `issue_dependencies_summary` whose count isn't a whole number is left out
     whole (its sub-issues unknown); a `pull_request` of the wrong type still
     marks a pull request, read without its details. A null reads as missing,
@@ -134,13 +135,6 @@ def as_read(item: dict) -> dict:
     for k in _TEXTS:
         if not isinstance(out.get(k), (str, type(None))):
             del out[k]
-    labels = out.get("labels")
-    if isinstance(labels, list):
-        out["labels"] = [
-            l for l in labels if isinstance(l, str) or (isinstance(l, dict) and isinstance(l.get("name"), (str, type(None))))
-        ]
-    elif labels is not None:
-        del out["labels"]
     for k, counts in (("sub_issues_summary", ("total", "completed")), ("issue_dependencies_summary", ("blocked_by",))):
         v = out.get(k)
         if v is not None and not (isinstance(v, dict) and all(_whole(v.get(c)) for c in counts)):
