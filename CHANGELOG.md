@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow status`'s and `workflow protection`'s text escape a character standard output can't take, never a traceback** (#786, found in the review of #774's pull request). `workflow status --issues F --prs G` without `--json` printed its text as it was: when standard output's encoding couldn't take a character in it, the command ended in a traceback, exit 1, with nothing printed. With `PYTHONIOENCODING=cp1252` (what a piped standard output gets on Windows by default) and an issue titled `emoji 😀 ok`, it ended in `UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f600'`; under `ascii` or `latin-1`, the text's own `… and N more` line did the same with plain titles. `workflow protection`'s text (the read-back, `--protect`, `--require-checks`, `--merge-queue`, `--checks-ran`) did the same on a base branch or check name it couldn't take.
+
+- **Escaped now,** through `cli._print_text`: each character the output's encoding can't take is written as Python's backslash escape (`\U0001f600`, `\u2026`, `\xe4`), and the rest as it is, exit 0. A lone surrogate is still shown as `\ud800` (#774).
+- **Unchanged:** a UTF-8 output prints the same text as before, and `--json` is unchanged (it is ASCII already). `workflow ready`'s text is #802's. A closed pipe or a full disk (#328) is not covered here.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_text_output_encoding.py`.
+
 **`workflow ready`'s text shows a lone surrogate as its escape, never a traceback** (#785, found in the review of #774's pull request). `workflow ready --issues F --prs G` without `--json` printed each ticket's line as it was: a `ready-for-agent` build ticket whose title held a lone surrogate (half a surrogate pair, written in the JSON as `"bad \ud800 title"`) ended it in `UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800'`, a traceback, exit 1. A `note:` line naming a protected path written with one in the ticket's body, or a waiting ticket's reason quoting a blocker's `state_reason` holding one, did the same. #774 fixed this failure in `workflow status`'s text.
 
 - **Shown as the escape now,** through `issues.escape_surrogates` (#774): each ticket's line and each `note:` line, so the ticket is listed with `\ud800` where the lone surrogate was. An `Area:` line holding one never ended in a traceback: the area is read as one word without it, and the note about the line quotes it escaped.
