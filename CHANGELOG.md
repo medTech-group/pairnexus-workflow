@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow ready`'s text shows the control characters in a title as escapes** (#797). Hardening of `ready`'s text output: `workflow ready` without `--json` printed each ticket's title, area, reasons and `note:` lines as they were, so a control character in one reached the terminal as it was.
+
+- **Escaped now,** through `issues.escape_controls` (#776): each control character (escape codes' `\x1b` among them), the line and paragraph separators and the bidirectional overrides are written as JSON escapes them (`\n`, `\t`, `\u001b`), so each ticket stays on its own one line. A lone surrogate is still shown as `\ud800` (#785).
+- **Unchanged:** plain titles and titles outside ASCII (accents, emoji, right-to-left text) print as before, and `--json` is unchanged. A tab in a title is now shown as `\t`.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_ready_control_chars.py`.
+
 **`workflow status`'s text shows the control characters in a title or branch as escapes** (#776). Hardening of the text output: `workflow status` without `--json` printed each issue's and pull request's title, and each item's detail (a pull request's branch among them), as they were, so a control character in one reached the terminal as it was.
 
 - **Escaped now,** through `issues.escape_controls`: each control character (escape codes' `\x1b` among them), the line and paragraph separators and the bidirectional overrides are written as JSON escapes them (`\n`, `\t`, `\u001b`), so each item stays on its own one line. A lone surrogate is still shown as `\ud800` (#774).
@@ -17,7 +23,7 @@
 **`workflow ready`'s text shows a lone surrogate as its escape, never a traceback** (#785, found in the review of #774's pull request). `workflow ready --issues F --prs G` without `--json` printed each ticket's line as it was: a `ready-for-agent` build ticket whose title held a lone surrogate (half a surrogate pair, written in the JSON as `"bad \ud800 title"`) ended it in `UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800'`, a traceback, exit 1. A `note:` line naming a protected path written with one in the ticket's body, or a waiting ticket's reason quoting a blocker's `state_reason` holding one, did the same. #774 fixed this failure in `workflow status`'s text.
 
 - **Shown as the escape now,** through `issues.escape_surrogates` (#774): each ticket's line and each `note:` line, so the ticket is listed with `\ud800` where the lone surrogate was. An `Area:` line holding one never ended in a traceback: the area is read as one word without it, and the note about the line quotes it escaped.
-- **Only lone surrogates change:** other text, an emoji and a tab among it, is printed as before (#797 covers the rest of this output's title handling), and `--json` is unchanged.
+- **Only lone surrogates change:** other text, an emoji and an accent among it, is printed as before, and `--json` is unchanged.
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_ready_surrogates.py`.
 
 **The try-it link reader sorts a comment whose id is a bool as one with no readable id** (#784, found in the review of #773's pull request). `workflow preview`'s reader (`_bot_rows` in `previews.py`) broke a tie between two of Cloudflare's comments updated at the same moment by their ids, taking an id with `isinstance(id, int)`, which Python passes for a bool: a comment whose `id` is `true` sorted as id 1, ahead of one whose id couldn't be read, so its row could be taken as the newest.

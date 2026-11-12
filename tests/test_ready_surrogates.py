@@ -84,11 +84,11 @@ def test_a_reason_with_a_lone_surrogate_is_listed(monkeypatch, capsys, tmp_path)
 
 
 def test_printable_text_is_unchanged(monkeypatch, capsys, tmp_path):
-    """Only lone surrogates change: an emoji (a surrogate pair in the JSON), an
-    accent and a tab are left as they were (#797 owns the rest of this
-    output's title handling)."""
+    """Only lone surrogates change here: an emoji (a surrogate pair in the
+    JSON) and an accent are left as they were. A tab is a control character,
+    shown as `\\t` (#797's `tests/test_ready_control_chars.py`)."""
     out = _ready(monkeypatch, capsys, tmp_path, "[" + _ticket(6, "caf\\u00e9 \\ud83d\\ude00 tab\\there", "Area: x") + "]")
-    assert "READY #6 [x] café \U0001F600 tab\there" in out.splitlines()
+    assert "READY #6 [x] café \U0001F600 tab\\there" in out.splitlines()
 
 
 def test_json_output_is_unchanged(monkeypatch, capsys, tmp_path):
