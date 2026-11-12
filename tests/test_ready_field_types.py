@@ -216,3 +216,9 @@ def test_the_changelog_note_says_a_parent_whose_total_is_a_whole_number_stays_on
     note = entry("#780, found in the review of #772's pull request")
     assert "whose `total` is one stays a parent" not in note
     assert "a parent whose `total` is a whole number stays a parent" in note
+
+
+def test_the_changelog_note_says_what_status_does_with_such_a_summary():
+    note = entry("#780, found in the review of #772's pull request")
+    assert "leaves such a summary out whole, its tickets unknown" not in note
+    assert "a spec's tickets read as unknown and a parent that isn't a spec reads as a build ticket (#799)" in note
