@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**`workflow fetch` refuses a ruleset whose id is a bool** (#782, found in the review of #773's pull request). `merge-check --fetch`'s rulesets reader (`rulesets()` in `fetch.py`) checked each listed ruleset's id with `isinstance(i, int)`, which Python passes for a bool: given `gh api …/rulesets` listing `[{"id": true}]`, it took the list and asked for `rulesets/True`, reporting GitHub's 404 instead of the list it couldn't read. Doctor's own reader of the same list already refused it.
+
+- **Refused now,** through `issues.is_whole` (#773): the rulesets read as "couldn't read", with `gh api's list of rulesets has an entry without an id`, and no ruleset is asked for. A list of whole-number ids is read as before, each ruleset in full.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_merge_check_evidence.py`.
+
 **`workflow ready` reads past an issue's or pull request's field of the wrong type** (#780, found in the review of #772's pull request). `workflow ready --issues F --prs G` ended in a traceback when an item's field had the wrong type: `{"number": 1, "title": "A", "state": 5, ...}` in `AttributeError: 'int' object has no attribute 'lower'` (in `issues.readiness`), and likewise a `title` or `body` that isn't text, a ticket's `"sub_issues_summary": {"total": "3"}` or `"issue_dependencies_summary": {"blocked_by": "1"}`, or a pull request's `"body": 5`. `workflow status` has read past these since #770; `ready` read the raw items.
 
 - **Read past now,** through `status.as_read`, the reader `workflow status` uses: each field of the wrong type is left out, so the item reads as it would without it, in the text and in `--json` alike, from `--issues` and `--prs` files and `--fetch`. A sub-issue or dependency summary loses only its count that isn't a whole number, so a parent whose `total` is a whole number stays a parent, never a ticket to start (`{"total": 3, "completed": "1"}` reads as `{"total": 3}`; `workflow status` leaves such a summary out whole, so a spec's tickets read as unknown and a parent that isn't a spec reads as a build ticket (#799)), and a `pull_request` of the wrong type still marks a pull request, read without its details (a blocker closed without merging). Labels of the wrong type were already read past (#772).

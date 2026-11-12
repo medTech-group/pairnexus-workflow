@@ -385,7 +385,7 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
         listed = api(f"{r}/rulesets?includes_parents=true&per_page=100", paginate=True)
         flat = _items(listed)
         ids = [x.get("id") for x in flat if isinstance(x, dict)]
-        if any(not isinstance(i, int) for i in ids) or len(ids) != len(flat):
+        if any(not issues_mod.is_whole(i) for i in ids) or len(ids) != len(flat):
             raise GhError("gh api's list of rulesets has an entry without an id")
         return [api(f"{r}/rulesets/{i}") for i in ids]  # each in full: the list gives summaries
 

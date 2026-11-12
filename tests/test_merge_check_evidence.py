@@ -521,6 +521,40 @@ def test_a_listed_ruleset_without_an_id_is_couldnt_read(project, capsys, tmp_pat
     assert [x["input"] for x in got["reasons"] if x["id"] == "couldnt_read"] == ["rulesets"]
 
 
+@pytest.mark.parametrize("flag", [True, False])
+def test_a_listed_ruleset_whose_id_is_a_bool_is_couldnt_read(project, capsys, tmp_path, monkeypatch, flag):
+    # Python counts a bool as an int: the id check is `issues.is_whole` (#782),
+    # as doctor's own reader of the same list has it, so no `rulesets/True` is asked for.
+    r = routes()
+    r[f"{REPO}/rulesets"] = fake_gh.pages([{"id": flag, "name": "Protect main"}])
+    gh = fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    [x] = [x for x in got["reasons"] if x["id"] == "couldnt_read"]
+    assert x["input"] == "rulesets"
+    assert "gh api's list of rulesets has an entry without an id" in x["wording"]["developer"]["message"]
+    asked = [p.split("?")[0] for p in gh.paths()]
+    assert not [p for p in asked if p.startswith(f"{REPO}/rulesets/")], asked
+
+
+def test_listed_rulesets_with_whole_ids_are_each_read_in_full(project, capsys, tmp_path, monkeypatch):
+    from workflow import issues as issues_mod
+
+    seen = []
+    real = issues_mod.is_whole
+    monkeypatch.setattr(issues_mod, "is_whole", lambda v: seen.append(v) or real(v))
+    data = with_report(inputs())
+    second = {**data["rulesets"][0], "id": 7, "name": "Also main"}
+    r = routes(data)
+    r[f"{REPO}/rulesets"] = fake_gh.pages([{"id": 1, "name": "Protect main"}], [{"id": 7, "name": "Also main"}])
+    r[f"{REPO}/rulesets/7"] = second
+    gh = fake_gh.install(tmp_path, monkeypatch, r)
+    got, _ = run(project, capsys, {}, "--fetch", "12")
+    assert got["decision"] == "ready", got["reasons"]
+    asked = [p.split("?")[0] for p in gh.paths()]
+    assert [p for p in asked if p.startswith(f"{REPO}/rulesets/")] == [f"{REPO}/rulesets/1", f"{REPO}/rulesets/7"]
+    assert {1, 7} <= set(x for x in seen if not isinstance(x, bool))
+
+
 @pytest.mark.parametrize("bad", ["0", "-3", "abc"])
 def test_fetch_needs_a_pull_requests_number(project, capsys, bad):
     with pytest.raises(SystemExit):
