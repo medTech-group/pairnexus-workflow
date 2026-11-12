@@ -290,16 +290,18 @@ def _fetch(repo: str, what: str) -> list[dict]:
 
     def items(printed: list, pages: list | None = None) -> list[dict]:
         """The objects in what `gh` printed (`printed`, each value as it
-        printed it), once each page in it (`pages`; unless given, each value
-        is one) is a list of objects, or pages of them (#789)."""
+        printed it), once its lists nest no deeper than `FETCH_DEPTH` (#788)
+        and then each page in it (`pages`; unless given, each value is one)
+        is a list of objects, or pages of them (#789)."""
+        try:
+            found = _fetch_items(printed, deepest=FETCH_DEPTH)
+        except TooDeep:
+            raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
         for page in printed if pages is None else pages:
             why = _not_a_list(page, "issues" if what == "issues" else "pull requests")
             if why:
                 raise FetchUnreadable(_gave(repo, what), why)
-        try:
-            return _fetch_items(printed, deepest=FETCH_DEPTH)
-        except TooDeep:
-            raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
+        return found
 
     p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
     if p.returncode == 0:
