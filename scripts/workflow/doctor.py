@@ -262,8 +262,9 @@ def _dotted(v) -> str:
 
 def _printable(text: str) -> str:
     """Text with what can't be printed (a control character, half a
-    surrogate pair, an invisible one) escaped as `\\uXXXX`."""
-    return "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in text)
+    surrogate pair, an invisible one) escaped: `issues.escape_unprintable`,
+    the kit's one list (#805)."""
+    return issues_mod.escape_unprintable(text)
 
 
 def _shown(value: str, most: int = 40) -> str:

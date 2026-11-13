@@ -394,9 +394,10 @@ def _short(sha: str | None) -> str:
 
 
 def _clean(text: str) -> str:
-    """Text from the input as a message shows it: a line break or control
-    character escaped, so it can't make a line of its own."""
-    return "".join(c if unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Zl", "Zp") else f"\\u{ord(c):04x}" for c in str(text))
+    """Text from the input as a message shows it: a line break, a control
+    character or one that can't be seen escaped, so it can't make a line of
+    its own or pass for another name (`issues.escape_unprintable`, #805)."""
+    return issues_mod.escape_unprintable(str(text))
 
 
 def _names(names) -> str:
