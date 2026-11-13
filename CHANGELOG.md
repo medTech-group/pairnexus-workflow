@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow ready`'s text escapes a character standard output can't take, never a traceback** (#802, found in the review of #785's pull request). `workflow ready --issues F --prs G` without `--json` printed each ticket's line and its `note:` lines with `print`: when standard output's encoding couldn't take a character in them, the command ended in a traceback, exit 1. With `PYTHONIOENCODING=ascii` (or `latin-1`), a waiting ticket's line ended in `UnicodeEncodeError: 'ascii' codec can't encode character '\u2014'` on the kit's own ` — ` before its reasons; with `LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0`, or a cp1252 output, a title holding an emoji did the same on `'\U0001f600'`. #785's `issues.escape_surrogates` covers a lone surrogate, not the output's encoding.
+
+- **Escaped now,** through `cli._print_text` (#786), as `workflow status`'s text is: each ticket's line, each `note:` line and the `start now:` line, with each character the output's encoding can't take written as Python's backslash escape (`\u2014`, `\U0001f600`, `\xe4`), and the rest as it is, exit 0. A lone surrogate is still shown as `\ud800` (#785).
+- **Unchanged:** a UTF-8 output prints the same text as before, and `--json` is unchanged. `ready`'s messages on standard error are not covered here.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_ready_output_encoding.py`.
+
 **A profile that isn't UTF-8, or isn't a file, is refused in one line** (#829, found in the review of #821's pull request; the unreadable-file part of #319). `profile.load` let `UnicodeDecodeError` and `OSError` through, so a `.claude/workflow/profile.toml` holding a byte that isn't UTF-8, or one that is a directory, ended `workflow profile check`, `workflow ready --fetch` and `workflow state join --fetch` in a traceback, with the profile's absolute path in it.
 
 - **Refused now:** `profile.load` gives `.claude/workflow/profile.toml isn't UTF-8 text`, `.claude/workflow/profile.toml isn't a file` (a directory, or a pipe that would block the read), or `.claude/workflow/profile.toml can't be read (<error>)` for any other file it can't open, the wording `workflow status` and `workflow doctor` already gave. So `workflow profile check`, `workflow ready --fetch`, `workflow state join --fetch` and the other commands that stop on a bad profile now refuse it in one `workflow: …` line and exit 1, and `merge-check`, `preview --fetch` and the guard name the profile's mistake in those words.
