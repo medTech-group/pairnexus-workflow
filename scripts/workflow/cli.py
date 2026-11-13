@@ -949,9 +949,9 @@ def _charter_estimate(a) -> int:
 def _load(root: Path | None = None, required: bool = True):
     """`load`, with any `OSError` it still lets through refused in `load`'s
     words (`profile.unreadable`): the callers here that refuse a profile they
-    can't read catch `ProfileError` alone. `load` now refuses an error from
-    asking whether the profile is there itself (`profile.missing`, #863), so
-    #837 can point these callers back at `load`."""
+    can't read catch `ProfileError` alone. `load` refuses an error from
+    asking whether the profile is there itself (`profile.missing`), so #837
+    can point these callers back at `load`."""
     try:
         return load(root, required=required)
     except OSError as e:
@@ -2166,9 +2166,9 @@ def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallbac
     with `planning`, a session `_planning` treats as one): a push
     or a merge is asked, or refused in solo mode or where nobody is asked;
     anything else is left alone. A missing profile (the kit isn't set up) is
-    left alone too; one that is there but can't be read is not (`missing`,
-    #863). Always 0, and never raises: a hook that exits non-zero
-    would let the tool run, or, once the hook blocks on failure, block them all."""
+    left alone too, as `missing` reads it. Always 0, and never raises: a hook
+    that exits non-zero would let the tool run, or, once the hook blocks on
+    failure, block them all."""
     try:
         if solo is None:
             root = project_root()

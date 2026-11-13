@@ -30,7 +30,7 @@ KIT = Path(__file__).resolve().parents[1]
 
 # A path the system refuses to look up (here a folder name too long) gives an
 # `OSError` when `load` asks whether the profile is there (`profile.missing`):
-# refused in `load`'s words all the same (#863).
+# refused in `load`'s words all the same.
 CANT_READ = f"{PROFILE_PATH} can't be read (OSError)"
 
 

@@ -122,14 +122,15 @@ def test_a_missing_profile_is_not_a_ticket_session(tmp_path, path, make):
 # ---------- the readers ----------
 
 
-def _beyond_reach(tmp_path):
-    """A project root whose name is longer than any allowed."""
+def _second_shape(tmp_path):
+    """A project root in the second shape: asking about a path in it fails
+    with an error other than "not found"."""
     return tmp_path / ("x" * 300)
 
 
-def test_load_refuses_a_long_name_in_one_line(tmp_path):
+def test_load_refuses_the_second_shape_in_one_line(tmp_path):
     with pytest.raises(ProfileError) as e:
-        load(_beyond_reach(tmp_path), required=False)
+        load(_second_shape(tmp_path), required=False)
     assert str(e.value) == ".claude/workflow/profile.toml can't be read (OSError)"
 
 
@@ -150,8 +151,8 @@ def test_load_still_reads_a_missing_profile_as_none(tmp_path):
     assert load(tmp_path, required=False) is None
 
 
-def test_the_old_python_reader_reads_a_long_name_as_unreadable(tmp_path):
-    root = str(_beyond_reach(tmp_path))
+def test_the_old_python_reader_reads_the_second_shape_as_unreadable(tmp_path):
+    root = str(_second_shape(tmp_path))
     assert _old_python._profile_text(root) == ""
     assert _old_python._ticket_branch(root) == _old_python.DEFAULT_TICKET_BRANCH
 
@@ -162,8 +163,8 @@ def test_the_old_python_reader_still_reads_a_missing_profile_as_none(tmp_path):
     assert _old_python._profile_text(str(tmp_path)) is None
 
 
-def test_the_cant_decide_fallback_asks_a_push_for_a_long_name(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "project_root", lambda: _beyond_reach(tmp_path))
+def test_the_cant_decide_fallback_asks_a_push_in_the_second_shape(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "project_root", lambda: _second_shape(tmp_path))
     assert cli._cant_decide({"tool_name": "Bash", "tool_input": {"command": "git push origin x"}}, "why") == 0
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
@@ -203,14 +204,32 @@ def test_the_check_reads_a_path_that_names_no_file_as_missing_and_raises_any_oth
     assert missing(tmp_path / "a\x00b") is True
     assert _old_python.missing(str(tmp_path / "a\x00b")) is True
     with pytest.raises(OSError):
-        missing(_beyond_reach(tmp_path) / PROFILE)
+        missing(_second_shape(tmp_path) / PROFILE)
 
 
-def test_a_name_too_long_is_an_error_other_than_not_found(tmp_path):
+def test_the_second_shape_is_an_error_other_than_not_found(tmp_path):
     """The readers' tests above rest on this."""
     with pytest.raises(OSError) as e:
-        os.stat(_beyond_reach(tmp_path) / PROFILE)
+        os.stat(_second_shape(tmp_path) / PROFILE)
     assert e.value.errno not in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+
+
+# ---------- the wording ----------
+
+
+def test_the_guards_own_lines_name_it_by_its_area_only():
+    """The code and the page's lines for the readers state what they do, with
+    no ticket number on them."""
+    import inspect
+
+    from workflow import profile
+
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8").splitlines()
+    for name in ("missing", "unreadable", "_load", "_profile_text"):
+        (line,) = [line for line in page if line.startswith(f"- `{name}`:")]
+        assert "#863" not in line, name
+    for fn in (_old_python.missing, _old_python._profile_text, profile.load, profile.unreadable, cli._load, cli._cant_decide):
+        assert "#863" not in inspect.getsource(fn), fn.__name__
 
 
 # ---------- the changelog ----------
