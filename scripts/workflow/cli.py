@@ -98,7 +98,7 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, project_root, resolve_experience, unreadable
+from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, missing, project_root, resolve_experience, unreadable
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -947,11 +947,11 @@ def _charter_estimate(a) -> int:
 
 
 def _load(root: Path | None = None, required: bool = True):
-    """`load`, with the `OSError` it still lets through, from asking whether
-    the profile exists (a folder that can't be searched, a path too long),
-    refused in `load`'s words (`profile.unreadable`): the callers here that
-    refuse a profile they can't read catch `ProfileError` alone. Until #837
-    moves that question inside `load`'s error handling."""
+    """`load`, with any `OSError` it still lets through refused in `load`'s
+    words (`profile.unreadable`): the callers here that refuse a profile they
+    can't read catch `ProfileError` alone. `load` refuses an error from
+    asking whether the profile is there itself (`profile.missing`), so #837
+    can point these callers back at `load`."""
     try:
         return load(root, required=required)
     except OSError as e:
@@ -2166,13 +2166,17 @@ def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallbac
     with `planning`, a session `_planning` treats as one): a push
     or a merge is asked, or refused in solo mode or where nobody is asked;
     anything else is left alone. A missing profile (the kit isn't set up) is
-    left alone too. Always 0, and never raises: a hook that exits non-zero
-    would let the tool run, or, once the hook blocks on failure, block them all."""
+    left alone too, as `missing` reads it. Always 0, and never raises: a hook
+    that exits non-zero would let the tool run, or, once the hook blocks on
+    failure, block them all."""
     try:
         if solo is None:
             root = project_root()
-            if not (root / PROFILE_PATH).exists():
-                return 0
+            try:
+                if missing(root / PROFILE_PATH):
+                    return 0
+            except OSError:
+                pass  # there, but can't be read: decided as for an invalid one
             solo = fallback.solo(root)
         d = fallback.decide(event, solo, why, fixes)
         if d:
