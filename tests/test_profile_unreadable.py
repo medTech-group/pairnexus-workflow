@@ -10,6 +10,7 @@ traceback. Seams: `profile.load`, and each command through `cli.main`."""
 import json
 import os
 import pathlib
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,8 @@ from test_doctor import _line, _project
 from test_status_local_gaps import _status
 from workflow import charter, cli, doctor, profile, state
 from workflow.profile import PROFILE_PATH, ProfileError
+
+KIT = Path(__file__).resolve().parents[1]
 
 NOT_UTF8 = f"{PROFILE_PATH} isn't UTF-8 text"
 NOT_A_FILE = f"{PROFILE_PATH} isn't a file"
@@ -216,3 +219,26 @@ def test_each_command_refuses_a_profile_whose_folder_cant_be_searched(tmp_path, 
     out, err = capsys.readouterr()
     assert out == "" and err == f"workflow: {CANT_SEARCH}\n"
     assert "Traceback" not in err and str(tmp_path) not in err
+
+
+def _note():
+    notes = since_0110()
+    start = notes.rindex("\n\n**", 0, notes.index("(#829,")) + 2
+    return notes[start:notes.index("\n\n**", start)]
+
+
+def _page_line():
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    return next(line for line in page.splitlines() if line.startswith("- `load`:"))
+
+
+@pytest.mark.parametrize("text", [_note, _page_line], ids=["changelog", "page"])
+def test_the_notes_name_the_commands_that_stop_on_it_not_every_command(text):
+    """`workflow charter markdown` still renders the page, `review-record` notes
+    it and goes on, `merge-check` gives a reason: not every command that reads
+    the profile refuses it in one line."""
+    said = text()
+    assert "every command" not in said
+    assert "the other commands that stop on a bad profile" in said
+    for name in ("`workflow profile check`", "`workflow ready --fetch`", "`workflow state join --fetch`"):
+        assert name in said
