@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from changelog_notes import KIT
 from workflow import cli
 from workflow.profile import PROFILE_PATH
 
@@ -76,3 +77,9 @@ def test_ordinary_warnings_are_unchanged(tmp_path, monkeypatch, capsys):
     warned = _warnings(err)
     assert "commands.suite unit: files glob 'nomatch/*.py' matches no file (globs are relative to the project root)" in warned
     assert warned == json.loads(out)["warnings"]
+
+
+def test_the_architecture_page_names_the_new_caller():
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    line = next(l for l in page.splitlines() if l.startswith("- `escape_unprintable`: in `issues.py`"))
+    assert "`workflow profile check`'s text prints each warning through it (#856)" in line, line
