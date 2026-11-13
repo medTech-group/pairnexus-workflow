@@ -390,24 +390,33 @@ def _experience_file(root):
     Opened without waiting, and read only when it is a regular file, so a pipe
     never blocks."""
     try:
-        fd = os.open(os.path.join(root, ".workflow", "experience"), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-    except (OSError, ValueError, TypeError):
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        f = _open_file(os.path.join(root, ".workflow", "experience"), "rb")
+        if f is None:
             return None
-        with os.fdopen(fd, "rb") as f:
-            fd = None
+        with f:
             data = f.read(_EXPERIENCE_FILE_MAX + 1)
         if len(data) > _EXPERIENCE_FILE_MAX:
             return None
         lines = data.decode("utf-8").strip().splitlines()
-    except (OSError, ValueError):  # UnicodeDecodeError is a ValueError
+    except (OSError, ValueError, TypeError):  # UnicodeDecodeError is a ValueError
         return None
+    return _level(lines[0]) if len(lines) == 1 else None
+
+
+def _open_file(path, mode="r", **kwargs):
+    """`path` opened as `open(path, mode, **kwargs)` opens it, or None when it
+    isn't a file. Its errors are the caller's. `_experience_file` and
+    `_profile_text` read through it."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        f = open(fd, mode, **kwargs)
+        fd = None
+        return f
     finally:
         if fd is not None:
             os.close(fd)
-    return _level(lines[0]) if len(lines) == 1 else None
 
 
 def _experience(root, env):
@@ -445,20 +454,13 @@ def _profile_text(root):
     if not os.path.isfile(path):
         return ""
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        f = _open_file(path, encoding="utf-8", errors="replace")
+        if f is None:
+            return ""
+        with f:
+            return f.read().lstrip("\ufeff")
     except (OSError, ValueError, TypeError):
         return ""
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return ""
-        with open(fd, encoding="utf-8", errors="replace") as f:
-            fd = None
-            return f.read().lstrip("\ufeff")
-    except (OSError, ValueError):
-        return ""
-    finally:
-        if fd is not None:
-            os.close(fd)
 
 
 def _overview_unlisted(root):

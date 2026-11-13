@@ -213,6 +213,27 @@ def test_the_ticket_branch_is_read_through_the_profile_reader(monkeypatch):
     assert _old_python._ticket_branch("nowhere") is None
 
 
+def test_the_profile_and_the_experience_file_open_through_one_helper(tmp_path, monkeypatch):
+    """One opener for the files `_old_python` reads without the kit (#833's
+    review), listed on its architecture page."""
+    _write(tmp_path, '[run]\nticket_branch = "work/t-*"\n')
+    (tmp_path / ".workflow").mkdir()
+    (tmp_path / ".workflow/experience").write_text("new\n", encoding="utf-8")
+    assert _old_python._profile_text(str(tmp_path)) == '[run]\nticket_branch = "work/t-*"\n'
+    assert _old_python._experience_file(str(tmp_path)) == "new"
+    opened = []
+
+    def none(path, *a, **kw):
+        opened.append(os.path.relpath(path, str(tmp_path)).replace(os.sep, "/"))
+
+    monkeypatch.setattr(_old_python, "_open_file", none)
+    assert _old_python._profile_text(str(tmp_path)) == ""
+    assert _old_python._experience_file(str(tmp_path)) is None
+    assert opened == [PROFILE.as_posix(), ".workflow/experience"]
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    assert "\n- `_open_file`: in `_old_python.py`," in page
+
+
 # ---------- the changelog ----------
 
 
