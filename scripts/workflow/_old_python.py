@@ -30,6 +30,7 @@ refuses the tool when WORKFLOW_ROLE is firm, and doctor still gives its gap.
 
 import argparse
 import collections
+import errno
 import fnmatch
 import json
 import os
@@ -443,14 +444,39 @@ def _has_previews(root):
     return bool(_PREVIEWS_TABLE.search(text) or _PREVIEWS_KEY.search(text[:first.start()] if first else text))
 
 
+# The errors that say a path isn't there. Any other error asking for it means
+# it may be there but can't be read.
+NOT_FOUND = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+
+
+def missing(path):
+    """Whether `path` isn't there: True when asking fails with an error saying
+    so (`NOT_FOUND`) or the path can't name a file (a NUL in it), False when
+    it is there, and any other `OSError` raised, as a path that is there but
+    can't be read. The one copy of the check: `profile` gives it on, and
+    `profile.load`, `cli._cant_decide` and `_profile_text` ask through it."""
+    try:
+        os.stat(path)
+    except OSError as e:
+        if e.errno in NOT_FOUND:
+            return True
+        raise
+    except ValueError:
+        return True
+    return False
+
+
 def _profile_text(root):
     """The profile's text, its bytes that aren't UTF-8 read as U+FFFD and a
     byte-order mark left out; "" when it is there but isn't a regular file
-    (a directory, or a pipe, never opened) or can't be read; None with no
-    profile."""
+    (a directory, or a pipe, never opened) or can't be read, and when `missing`
+    raises; None with no profile."""
     path = os.path.join(root, ".claude", "workflow", "profile.toml")
-    if not os.path.exists(path):
-        return None
+    try:
+        if missing(path):
+            return None
+    except OSError:
+        return ""
     if not os.path.isfile(path):
         return ""
     try:

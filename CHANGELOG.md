@@ -7,6 +7,11 @@
 - **Unchanged:** ordinary output reads as before.
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_adopt_862.py`.
 
+**A security problem in the guard is fixed** (#863, found in the review of #833's pull request). Its details stay with the owner.
+
+- **Unchanged:** a missing profile still reads as "not set up", and an ordinary profile reads as before.
+- **For projects updating:** nothing to do; the fix reaches a project with the kit's next update. `VERSION` is unchanged. Tests: `tests/test_guard_863.py`.
+
 **A security problem in terminal output** (#856, found in the review of #824's pull request). Fixed; its details were given to the owner.
 
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_warnings_shown.py`.
