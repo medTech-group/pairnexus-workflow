@@ -203,3 +203,13 @@ def test_the_changelog_names_it_by_its_area_only():
     note = entry("#872, found in the review of #863's pull request")
     for word in ("chmod", "000", "search", "permission", "unshare", "folder", "link", "vendor.py"):
         assert word not in note.lower(), word
+
+
+# ---------- the decision builder ----------
+
+
+def test_the_hook_command_builds_its_decisions_through_the_shared_builder():
+    import inspect
+
+    assert "hookSpecificOutput" not in inspect.getsource(vendor.hook_command)
+    assert "_old_python._decision" in inspect.getsource(vendor.hook_command)

@@ -228,23 +228,17 @@ def hook_command(sub: str, plugin: bool = False) -> str:
         'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then '
         """O=$(printf '%s\\n' "$E" | python3 -B "$F" hook guard) && { [ -z "$O" ] || printf '%s\\n' "$O"; exit 0; }; fi; """
     )
+    def decide(decision: str, reason: str) -> str:
+        return json.dumps(_old_python._decision(decision, reason), separators=(",", ":"))
+
     # With fallback.sh missing too (a partial copy of the kit), every tool is asked.
-    broken = json.dumps(
-        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": BROKEN_KIT_REASON}},
-        separators=(",", ":"),
-    )
+    broken = decide("ask", BROKEN_KIT_REASON)
     fallback = (
         """if [ -f "$F" ] && [ -f "${F%.py}/fallback.sh" ]; then printf '%s\\n' "$E" | sh "${F%.py}/fallback.sh"; """
         f"""elif [ -f "$F" ]; then printf '%s\\n' '{broken}'; fi; exit 0"""
     )
     if plugin:
         return run + fallback
-
-    def decide(decision: str, reason: str) -> str:
-        return json.dumps(
-            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}},
-            separators=(",", ":"),
-        )
 
     def deny(reason: str) -> str:
         return decide("deny", reason)
