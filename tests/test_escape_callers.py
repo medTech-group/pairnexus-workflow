@@ -181,6 +181,79 @@ def test_protection_printable_keeps_the_json_s_lines():
     assert json.loads(shown) == {"name": "a\x9bb", "x": [1]}
 
 
+# ---------- where `workflow protection`'s pass reaches (the changelog note names each) ----------
+
+
+DEVELOPER = {"WORKFLOW_EXPERIENCE": "developer", "PYTHONIOENCODING": "utf-8"}
+
+
+def _off(name):
+    """A ruleset on the default branch, turned off, named `name`."""
+    return {"id": 1, "name": name, "target": "branch", "enforcement": "disabled", "rules": [],
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}}}
+
+
+def test_protection_json_missing_escapes_a_ruleset_name(repo, inp):
+    """`workflow protection --json`'s `missing` quotes each ruleset's name
+    through `protection.printable`: a bidirectional override in it is its
+    escape, never the character."""
+    p = protection_cli(repo, "--rulesets", put(inp, "rulesets.json", [_off("main\u202erules")]), "--base", "main", "--json")
+    assert p.returncode == 0, p.stderr
+    missing = json.loads(p.stdout)["missing"]
+    assert 'ruleset "main\\u202erules" is not active (enforcement "disabled")' in missing, missing
+    assert not any("\u202e" in m for m in missing), missing
+
+
+@pytest.mark.parametrize("extra", [(), ("--json",)])
+def test_protection_error_message_escapes_a_ruleset_name(repo, inp, extra):
+    rs = {"id": 1, "name": "Protect \u202emain\x9b", "target": "branch", "enforcement": "active"}
+    p = protection_cli(repo, "--rulesets", put(inp, "rulesets.json", [rs]), "--base", "main", *extra)
+    assert p.returncode == 2, p.stdout
+    assert 'ruleset "Protect \\u202emain\\u009b" isn\'t in full' in p.stderr, p.stderr
+    assert "\u202e" not in p.stderr and "\x9b" not in p.stderr, p.stderr
+
+
+def test_doctor_github_lines_escape_workflow_protections_words(tmp_path):
+    """Doctor's GitHub lines show `workflow protection`'s words in the
+    developer wording, in its text and its `--json` `message`."""
+    from test_doctor_github import _files, _github, _protected
+
+    root = _protected(tmp_path)
+    rs = _off("main\u202erules")
+    message = _github(tmp_path, root, rulesets=[rs], env=DEVELOPER)["github.protection.active"]["message"]
+    assert 'Ruleset "main\\u202erules" is not active' in message and "\u202e" not in message, message
+    p = _doctor(tmp_path, root, *_files(tmp_path, [rs]), env=DEVELOPER)
+    assert p.returncode == 0, p.stderr
+    assert 'ruleset "main\\u202erules" is not active' in p.stdout and "\u202e" not in p.stdout, p.stdout
+
+
+def test_doctor_github_lines_escape_workflow_protections_error(tmp_path):
+    from test_doctor_github import _files, _github, _protected
+
+    root = _protected(tmp_path)
+    rs = {**_off("Protect \u202emain\x9b"), "enforcement": "active"}
+    del rs["rules"]
+    message = _github(tmp_path, root, rulesets=[rs], env=DEVELOPER)["github.ruleset"]["message"]
+    assert 'Ruleset "Protect \\u202emain\\u009b" isn\'t in full' in message, message
+    assert "\u202e" not in message and "\x9b" not in message, message
+    p = _doctor(tmp_path, root, *_files(tmp_path, [rs]), env=DEVELOPER)
+    assert p.returncode == 0, p.stderr
+    assert 'Ruleset "Protect \\u202emain\\u009b"' in p.stdout and "\u202e" not in p.stdout and "\x9b" not in p.stdout, p.stdout
+
+
+def test_merge_check_json_queue_note_escapes_a_ruleset_name(project, capsys):
+    """merge-check's note on a merge-queue rule it can't judge holds
+    `workflow protection`'s words as they are, so they reach its `--json`
+    `notes` through `protection.printable`."""
+    from test_merge_check_queue import behind, queue_ruleset
+
+    data = behind(inputs())
+    data["rulesets"].append({**queue_ruleset(include=("refs/heads/ma*",)), "name": "q\u202eq"})
+    got, _ = check(project, capsys, data)
+    [note] = [n["message"] for n in got["notes"] if n["id"] == "queue_unsure"]
+    assert 'ruleset "q\\u202eq" includes' in note and "\u202e" not in note, note
+
+
 # ---------- the architecture page ----------
 
 
@@ -215,3 +288,15 @@ def test_the_changelog_note_names_workflow_graphs_text():
     note = entry("#805, found in the review of #776's pull request")
     unchanged = next(l for l in note.splitlines() if l.startswith("- **Unchanged:**"))
     assert "`workflow graph`'s" in unchanged and "all three" not in unchanged, unchanged
+
+
+def test_the_changelog_note_names_where_workflow_protections_pass_reaches():
+    """`protection.printable` reaches `workflow protection`'s `--json` and
+    error messages, doctor's GitHub lines (text and `--json`) and
+    merge-check's `--json` queue note, not its text alone."""
+    note = entry("#805, found in the review of #776's pull request")
+    assert "text only" not in note
+    item = next(l for l in note.splitlines() if l.startswith("- **Changed in `workflow protection`'s"))
+    for words in ("`workflow protection --json`'s `missing`", "error messages", "doctor's GitHub lines",
+                  "its `--json` `message`", "merge-check's whole text", "`notes[].message`"):
+        assert words in item, words
