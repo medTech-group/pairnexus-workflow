@@ -147,9 +147,10 @@ def test_changelog_notes_it_under_unreleased():
     assert "#829" in notes
 
 
-def _note():
+def _note(ticket="829"):
+    """The changelog's note for `ticket` (#829's by default), from its heading to the next note's."""
     notes = since_0110()
-    start = notes.rindex("\n\n**", 0, notes.index("(#829,")) + 2
+    start = notes.rindex("\n\n**", 0, notes.index(f"(#{ticket},")) + 2
     return notes[start:notes.index("\n\n**", start)]
 
 

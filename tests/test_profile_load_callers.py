@@ -21,7 +21,7 @@ import pytest
 
 import fake_gh
 from changelog_notes import since_0110
-from test_profile_unreadable import NOT_UTF8, _not_utf8, _page_line
+from test_profile_unreadable import NOT_UTF8, _not_utf8, _note, _page_line
 from workflow import charter, cli, state
 from workflow.profile import PROFILE_PATH
 
@@ -242,3 +242,17 @@ def test_page_profiles_comment_no_longer_says_a_file_that_isnt_utf8_is_a_value_e
 
 def test_changelog_notes_it_under_unreleased():
     assert "#832" in since_0110()
+
+
+def test_the_note_names_the_commands_that_say_it_for_a_path_that_cant_be_looked_at():
+    """On a path that can't be looked at, `workflow status` and `workflow doctor`
+    stop before their profile line, as before #832 (status in a traceback from
+    the kit's lock, doctor with a check that couldn't run): the note says so,
+    and names the commands that give `load`'s words there."""
+    note = _note("832")
+    start = note.index("When the profile's path can't even be looked at")
+    claim = note[start:note.index("\n", start)]
+    for name in ("a charter change", "`workflow preview --fetch`", "`workflow research`", "`workflow merge-check`", "`workflow review-record`"):
+        assert name in claim, name
+    assert "these commands" not in claim
+    assert "`workflow status` and `workflow doctor` still stop before their profile line" in claim
