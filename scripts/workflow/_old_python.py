@@ -444,26 +444,40 @@ def _has_previews(root):
     return bool(_PREVIEWS_TABLE.search(text) or _PREVIEWS_KEY.search(text[:first.start()] if first else text))
 
 
-# The errors that say a path isn't there, as `profile.NOT_FOUND` (this module
-# can't import the kit): any other error asking for it is a path that may be
-# there but can't be read (#863).
-_NOT_FOUND = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+# The errors that say a path isn't there. Any other error asking for it means
+# it may be there but can't be read.
+NOT_FOUND = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+
+
+def missing(path):
+    """Whether `path` isn't there: True when asking fails with an error saying
+    so (`NOT_FOUND`) or the path can't name a file (a NUL in it), False when
+    it is there, and any other `OSError` raised, as a path that is there but
+    can't be read. The one copy of the check: `profile` gives it on, and
+    `profile.load`, `cli._cant_decide` and `_profile_text` ask through it."""
+    try:
+        os.stat(path)
+    except OSError as e:
+        if e.errno in NOT_FOUND:
+            return True
+        raise
+    except ValueError:
+        return True
+    return False
 
 
 def _profile_text(root):
     """The profile's text, its bytes that aren't UTF-8 read as U+FFFD and a
     byte-order mark left out; "" when it is there but isn't a regular file
-    (a directory, or a pipe, never opened) or can't be read, and when asking
-    whether it is there fails with an error other than "not found"
-    (`_NOT_FOUND`, #863); None with no profile."""
+    (a directory, or a pipe, never opened) or can't be read, and when `missing`
+    raises; None with no profile."""
     path = os.path.join(root, ".claude", "workflow", "profile.toml")
     try:
-        st = os.stat(path)
-    except OSError as e:
-        return None if e.errno in _NOT_FOUND else ""
-    except ValueError:  # a NUL in the path: nothing there by that name
-        return None
-    if not stat.S_ISREG(st.st_mode):
+        if missing(path):
+            return None
+    except OSError:
+        return ""
+    if not os.path.isfile(path):
         return ""
     try:
         f = _open_file(path, encoding="utf-8", errors="replace")

@@ -174,6 +174,38 @@ def test_the_cant_decide_fallback_leaves_a_missing_profile_alone(tmp_path, monke
     assert capsys.readouterr().out == ""
 
 
+def test_the_readers_ask_whether_the_profile_is_there_through_one_check(tmp_path, monkeypatch):
+    """`profile` gives on `_old_python`'s check, and `_profile_text` asks
+    through it: one copy of the check, read the same way on both paths."""
+    from workflow import profile
+
+    assert profile.missing is _old_python.missing
+    assert profile.NOT_FOUND is _old_python.NOT_FOUND
+
+    def refused(path):
+        raise OSError(errno.EACCES, "refused")
+
+    (tmp_path / PROFILE).parent.mkdir(parents=True)
+    (tmp_path / PROFILE).write_text(VALID, encoding="utf-8")
+    assert _old_python._profile_text(str(tmp_path)) == VALID
+    monkeypatch.setattr(_old_python, "missing", refused)
+    assert _old_python._profile_text(str(tmp_path)) == ""
+
+
+def test_the_check_reads_a_path_that_names_no_file_as_missing_and_raises_any_other_error(tmp_path):
+    """Both sides of the check: a path that is there, one that isn't, one that
+    can't name a file, and an error other than "not found"."""
+    from workflow.profile import missing
+
+    (tmp_path / "here").write_text("", encoding="utf-8")
+    assert missing(tmp_path / "here") is False
+    assert missing(tmp_path / "gone") is True
+    assert missing(tmp_path / "a\x00b") is True
+    assert _old_python.missing(str(tmp_path / "a\x00b")) is True
+    with pytest.raises(OSError):
+        missing(_beyond_reach(tmp_path) / PROFILE)
+
+
 def test_a_name_too_long_is_an_error_other_than_not_found(tmp_path):
     """The readers' tests above rest on this."""
     with pytest.raises(OSError) as e:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import glob
 import os
 import re
@@ -11,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import issues as issues_mod
+from ._old_python import NOT_FOUND, missing  # the one check of whether a path is there, given on
 from . import presets as presets_mod
 from . import proc as proc_mod
 from . import roles as roles_mod
@@ -708,25 +708,6 @@ def unreadable(e: OSError) -> ProfileError:
     there fails (`missing`), and `cli._load` for any other `OSError` `load`
     still lets through (#837)."""
     return ProfileError(f"{PROFILE_PATH} {cant_be_read(e)}")
-
-
-# The errors that say a path isn't there. Any other error asking for it means
-# it may be there but can't be read (#863).
-NOT_FOUND = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
-
-
-def missing(path: Path) -> bool:
-    """Whether `path` isn't there: True only when asking fails with an error
-    saying so (`NOT_FOUND`), and any other `OSError` raised, as a path that is
-    there but can't be read (#863). One answer on every Python, where
-    `Path.exists` raises some errors up to 3.13 and answers False from 3.14."""
-    try:
-        path.stat()
-    except OSError as e:
-        if e.errno in NOT_FOUND:
-            return True
-        raise
-    return False
 
 
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
