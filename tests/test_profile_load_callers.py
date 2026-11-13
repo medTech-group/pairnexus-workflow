@@ -207,7 +207,11 @@ def test_the_page_names_the_callers_that_read_it_through_the_wrapper():
     for said in THROUGH_LOAD.values():
         assert said in line, said
     assert "never catch the read's errors to word them their own way" in _page_line("load")
-    assert "`load` and `cli._load` both give them" in _page_line("unreadable")
+    # Since #836, `load` words its refusal from `read_file`'s reason, not
+    # through `unreadable`: only `cli._load` gives it.
+    unreadable = _page_line("unreadable")
+    assert "`cli._load` gives it" in unreadable
+    assert "`load` and `cli._load`" not in unreadable and "`load` gives it" not in unreadable
 
 
 def test_page_profiles_comment_no_longer_says_a_file_that_isnt_utf8_is_a_value_error():
