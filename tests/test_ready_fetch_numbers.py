@@ -56,6 +56,10 @@ def _project(monkeypatch, tmp_path, repo_toml: str = '"acme/demo"'):
 
 def _install(monkeypatch, tmp_path, issue_pages: list, pr_pages: list, route: str):
     r = ROUTES[route]
+    if r["numeric_refused"]:
+        # The fake proxy refuses `--paginate` only past a first page: a
+        # trailing empty page makes one page read page by page too.
+        issue_pages, pr_pages = [*issue_pages, []], [*pr_pages, []]
     routes = {
         "repos/acme/demo/issues": fake_gh.pages(*issue_pages, numeric_refused=r["numeric_refused"]),
         "repos/acme/demo/pulls": fake_gh.pages(*pr_pages, numeric_refused=r["numeric_refused"]),
@@ -63,12 +67,20 @@ def _install(monkeypatch, tmp_path, issue_pages: list, pr_pages: list, route: st
     return fake_gh.install(tmp_path, monkeypatch, routes, slurp=r["slurp"])
 
 
+def _read_by_page(gh, route: str):
+    """The page-by-page route really read the issues one page at a time
+    (`fetch.by_page`), rather than `--slurp` answering them whole."""
+    if route == "page-by-page":
+        assert "repos/acme/demo/issues?state=all&per_page=100&page=1" in gh.paths(), gh.paths()
+
+
 def _ready(monkeypatch, capsys, tmp_path, issues: list, prs: list, *extra, route: str = "slurp"):
     _project(monkeypatch, tmp_path)
-    _install(monkeypatch, tmp_path, [issues], [prs], route)
+    gh = _install(monkeypatch, tmp_path, [issues], [prs], route)
     code = cli.main(["ready", "--fetch", *extra])
     out = capsys.readouterr()
     assert "Traceback" not in out.err
+    _read_by_page(gh, route)
     return code, out.out, out.err
 
 
@@ -113,12 +125,13 @@ def test_the_mixed_numbers_across_two_pages_are_refused(monkeypatch, capsys, tmp
     page is full (100), so the page-by-page route reads the second too."""
     _project(monkeypatch, tmp_path)
     first = [{**ISSUE, "number": n} for n in range(100, 199)] + [MIXED[0]]
-    _install(monkeypatch, tmp_path, [first, [MIXED[1]]], [[PR]], route)
+    gh = _install(monkeypatch, tmp_path, [first, [MIXED[1]]], [[PR]], route)
     code = cli.main(["ready", "--fetch"])
     err = capsys.readouterr().err
     assert code == 1, err
     assert "Traceback" not in err
     assert err.strip().splitlines() == [REFUSAL.format("1 of 101")]
+    _read_by_page(gh, route)
 
 
 # ---------- the same check as `status --fetch`'s ----------
