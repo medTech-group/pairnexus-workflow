@@ -604,7 +604,7 @@ def _read_experience_file(root) -> tuple[str | None, str]:
     try:
         lines = data.decode("utf-8").strip().splitlines()
     except UnicodeDecodeError:
-        return None, "it isn't UTF-8 text"
+        return None, f"it {NOT_UTF8}"
     if not lines:
         return None, "it is empty"
     if len(lines) > 1:
@@ -642,31 +642,75 @@ def resolve_experience(root: Path | None, profile_value=None, environ=None) -> E
     return Experience(None, "unknown", warnings)
 
 
+# ---------- a file that can't be read (#836) ----------
+#
+# The one check and wording of a file the kit reads that it can't read, worded
+# to follow the file's name: `load` says "<the profile's path> isn't a file",
+# doctor "it isn't a file". `load`, `doctor._file` and `doctor._read_text` all
+# read through `file_problem`.
+
+NOT_A_FILE = "isn't a file"
+NOT_UTF8 = "isn't UTF-8 text"
+
+
+def cant_be_read(e: Exception) -> str:
+    """The words for a file (or standard input) an error stops the kit
+    reading: the error's type, never its message, which may name an absolute
+    path."""
+    return f"can't be read ({type(e).__name__})"
+
+
+def file_problem(path: Path) -> str | None:
+    """Why `path` can't be read as a regular file, or None when it can or is
+    missing: `NOT_A_FILE` for a directory or a pipe, which is never opened (a
+    pipe would block the read), else `cant_be_read`'s words when even asking
+    fails. Never raises."""
+    try:
+        if path.exists() and not path.is_file():
+            return NOT_A_FILE
+    except (OSError, ValueError) as e:
+        return cant_be_read(e)
+    return None
+
+
+def read_file(path: Path) -> tuple[str | None, str | None]:
+    """(the file's text, None), with any byte-order mark kept for the caller
+    to judge; (None, why it can't be read): `file_problem`'s words, `NOT_UTF8`
+    or `cant_be_read`'s; (None, None) when it is missing. Never raises, and
+    never opens a directory or a pipe."""
+    why = file_problem(path)
+    if why:
+        return None, why
+    try:
+        if not path.exists():
+            return None, None
+        return path.read_text(encoding="utf-8"), None
+    except UnicodeDecodeError:
+        return None, NOT_UTF8
+    except (OSError, ValueError) as e:
+        return None, cant_be_read(e)
+
+
 def unreadable(e: OSError) -> ProfileError:
     """`load`'s refusal of a profile file an `OSError` stops it reading: the
-    profile's path in the project and the error's type, never the absolute
-    path (#829). `cli._load` gives it for the `OSError` `load` still lets
-    through (#837)."""
-    return ProfileError(f"{PROFILE_PATH} can't be read ({type(e).__name__})")
+    profile's path in the project and `cant_be_read`'s words, never the
+    absolute path (#829). `cli._load` gives it for the `OSError` `load` still
+    lets through (#837)."""
+    return ProfileError(f"{PROFILE_PATH} {cant_be_read(e)}")
 
 
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
     root = root or project_root()
     path = root / PROFILE_PATH
-    if not path.exists():
+    # Each refusal names the profile by its path in the project, never the
+    # absolute one, as `workflow status` and `workflow doctor` say it (#829).
+    text, why = read_file(path) if path.exists() else (None, None)
+    if why:
+        raise ProfileError(f"{PROFILE_PATH} {why}")
+    if text is None:  # missing, or gone since `exists`
         if required:
             raise ProfileError(f"no profile at {path}; run the setup-workflow skill first")
         return None
-    # Each refusal names the profile by its path in the project, never the
-    # absolute one, as `workflow status` and `workflow doctor` say it (#829).
-    try:
-        if not path.is_file():  # a directory, or a pipe that would block the read
-            raise ProfileError(f"{PROFILE_PATH} isn't a file")
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        raise ProfileError(f"{PROFILE_PATH} isn't UTF-8 text") from None
-    except OSError as e:
-        raise unreadable(e) from None
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
