@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from changelog_notes import released, since_0110
 from test_adopt import CLI, _run, _starter
 
@@ -63,6 +65,14 @@ def test_case_three_reads_as_before_for_an_ordinary_project(tmp_path):
     p = _run(copy)
     assert p.returncode == 0
     assert "Changed .github/CODEOWNERS: @old-owner → @ada" in p.stdout.splitlines()
+
+
+@pytest.mark.parametrize("name", ["ノート\u3000App", "Dev notes \U0001F469\u200d\U0001F4BB", "My\u00a0Notes"])
+def test_case_three_keeps_an_ordinary_name_as_typed(tmp_path, name):
+    copy = _starter(tmp_path / "copy")
+    p = _run(copy, name=name)
+    assert p.returncode == 0, p.stderr
+    assert f"Changed README.md: title = {name}" in p.stdout.splitlines()
 
 
 def test_the_note_and_this_file_name_the_area_only():

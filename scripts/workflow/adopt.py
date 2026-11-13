@@ -87,13 +87,11 @@ class Result:
             self.writes[rel] = ((BOM if rel in self.boms else "") + new).encode("utf-8")
 
     def text(self) -> str:
-        """What changed and the notes, a line each, each escaped as
-        `AdoptError`'s message is (#862)."""
         lines = [f"Changed {path}: {what}" for path, what in self.changed]
         lines += self.notes
         if not self.changed:
             lines.append("Already yours: nothing to change.")
-        return "\n".join(issues_mod.escape_unprintable(line) for line in lines)
+        return "\n".join(lines)
 
 
 # Letters NFKD doesn't break into an ASCII letter and an accent, spelled out.
@@ -268,6 +266,7 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     res.record(PROFILE, text, new_text, ", ".join(keys))
 
     old_owner = old.get("owner") or ""
+    shown = issues_mod.escape_unprintable(old_owner)
     found = next((p for p in CODEOWNERS_PATHS if (root / p).is_file()), None)
     if found is None:
         res.notes.append("Skipped CODEOWNERS: not there")
@@ -277,8 +276,8 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         text = res.read(root, found)
         new_text = _codeowners(text, old_owner, owner)
         if new_text == text and not _owner(owner).search(text):  # already yours after a failed run: nothing to say
-            res.notes.append(f"Left {found} as it is: it doesn't name @{old_owner}")
-        res.record(found, text, new_text, f"@{old_owner} → @{owner}")
+            res.notes.append(f"Left {found} as it is: it doesn't name @{shown}")
+        res.record(found, text, new_text, f"@{shown} → @{owner}")
 
     text = res.read(root, WRANGLER)
     if text is None:
