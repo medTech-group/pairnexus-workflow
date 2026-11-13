@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow ready`'s text escapes a character standard output can't take, never a traceback** (#802, found in the review of #785's pull request). `workflow ready --issues F --prs G` without `--json` printed each ticket's line and its `note:` lines with `print`: when standard output's encoding couldn't take a character in them, the command ended in a traceback, exit 1. With `PYTHONIOENCODING=ascii` (or `latin-1`), a waiting ticket's line ended in `UnicodeEncodeError: 'ascii' codec can't encode character '\u2014'` on the kit's own ` — ` before its reasons; with `LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0`, or a cp1252 output, a title holding an emoji did the same on `'\U0001f600'`. #785's `issues.escape_surrogates` covers a lone surrogate, not the output's encoding.
+
+- **Escaped now,** through `cli._print_text` (#786), as `workflow status`'s text is: each ticket's line, each `note:` line and the `start now:` line, with each character the output's encoding can't take written as Python's backslash escape (`\u2014`, `\U0001f600`, `\xe4`), and the rest as it is, exit 0. A lone surrogate is still shown as `\ud800` (#785).
+- **Unchanged:** a UTF-8 output prints the same text as before, and `--json` is unchanged. `ready`'s messages on standard error are not covered here.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_ready_output_encoding.py`.
+
 **`workflow status` never lists a parent whose `completed` count has the wrong type as a ready build ticket** (#799, found in the review of #780's pull request). `workflow status` read a `sub_issues_summary` with a count of the wrong type as missing whole (#770), so a parent issue labelled `ready-for-agent` whose summary was `{"total": 3, "completed": "1"}` read as a build ticket: `Ready build tickets: 1` / `- #1 Parent [a]`, and #1 under `ready` in `--json`. `workflow ready` reads the same item as a parent since #780, so the two disagreed.
 
 - **A parent now,** whatever the type of its `completed` (`"1"`, `1.5`, `true`, `[1]`), when its `total` is a whole number above 0: `status` reads readiness as `ready` does (`status.as_read` with `by_count`), and whether an issue is a parent from that same reading of its own summary, as before from its `total`, so a parent is never a ready ticket in either, as `ready` reads it. It is listed with the specs and parents as `parent issue, tickets unknown (no sub_issues_summary)`.
