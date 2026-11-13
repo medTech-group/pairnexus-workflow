@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**A security problem in the guard is fixed** (#833; #851 was its duplicate). Its details stay with the owner.
+
+- **Unchanged:** an ordinary profile reads as before.
+- **For projects updating:** nothing to do; the fix reaches a project with the kit's next update. `VERSION` is unchanged. Tests: `tests/test_guard_833.py`.
+
 **A security problem in terminal output** (#824, found in the review of #821's pull request). Fixed; its details were given to the owner.
 
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_error_shown.py`.
