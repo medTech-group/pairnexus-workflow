@@ -135,17 +135,21 @@ _PLANNING = (
     'if [ -n "$W" ] && [ -f "${F%.py}/fallback.sh" ] && [ "$(sh "${F%.py}/fallback.sh" --ticket-rule </dev/null)" = ticket ]; '
     'then R=attended; fi; '
 )
-# The CLI not found because a folder on its path is there but can't be read is
-# not a missing kit (#872): U says so, and the hook then refuses every tool to
-# a ticket or conductor session (with WORKFLOW_ROLE unset, a branch matching
-# the default run.ticket_branch, since the profile can't be read either) and
-# asks about every tool otherwise.
+# The CLI not found because the deepest part of its path that is there is a
+# folder that can't be searched or a link that can't be followed is not a
+# missing kit (#872): U says so, and the hook then refuses every tool to a
+# ticket or conductor session (with WORKFLOW_ROLE unset, a branch matching the
+# default run.ticket_branch, since the profile can't be read either, or a
+# branch that can't be read) and asks about every tool otherwise. A path that
+# is simply absent, under a folder that can be searched or under a file, stays
+# a missing kit.
 _UNREADABLE = (
-    'U=; if [ ! -f "$F" ]; then for S in "" /workflow /workflow/bin; do '
-    'if [ -d "$CLAUDE_PROJECT_DIR/.claude$S" ] && [ ! -x "$CLAUDE_PROJECT_DIR/.claude$S" ]; then U=1; fi; done; fi; '
+    'U=; if [ ! -f "$F" ]; then X=$F; '
+    'while [ -n "$X" ] && [ ! -e "$X" ] && [ ! -L "$X" ]; do case "$X" in */*) X=${X%/*};; *) X=;; esac; done; '
+    'if { [ -L "$X" ] && [ ! -e "$X" ]; } || { [ -d "$X" ] && [ ! -x "$X" ]; }; then U=1; fi; fi; '
     'if [ -n "$U" ] && [ -z "$R" ]; then '
     'B=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null); '
-    'case "$B" in HEAD|"") ;; claude/build-*) R=ticket;; esac; fi; '
+    'case "$B" in HEAD) ;; ""|claude/build-*) R=ticket;; esac; fi; '
 )
 
 

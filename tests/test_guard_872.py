@@ -72,6 +72,72 @@ def test_a_ticket_or_conductor_session_is_refused_every_tool(shape, role):
     assert _guard(root, RESTORE, role) == "deny"
 
 
+def _workflow_linked_into_a_locked_folder(root, locked):
+    shutil.move(root / ".claude/workflow", locked / "workflow")
+    os.symlink(locked / "workflow", root / ".claude/workflow")
+
+
+def _cli_linked_into_a_locked_folder(root, locked):
+    cli = root / vendor.HOOK_TAG
+    shutil.move(cli, locked / cli.name)
+    os.symlink(locked / cli.name, cli)
+
+
+def _claude_linked_into_a_locked_folder(root, locked):
+    shutil.move(root / ".claude", locked / ".claude")
+    os.symlink(locked / ".claude", root / ".claude")
+
+
+def _workflow_linked_to_itself(root, locked):
+    shutil.rmtree(root / ".claude/workflow")
+    os.symlink("workflow", root / ".claude/workflow")
+
+
+@pytest.fixture
+def linked(tmp_path):
+    """A project whose kit is reached through a link in the given layout, put
+    back after the test."""
+    locked = tmp_path / "locked"
+    locked.mkdir()
+
+    def make(branch, layout):
+        root = _project(tmp_path, branch, profile=NAMED, kit=True)
+        layout(root, locked)
+        os.chmod(locked, 0)
+        return root
+
+    yield make
+    os.chmod(locked, 0o755)
+
+
+@pytest.mark.parametrize("layout", [_workflow_linked_into_a_locked_folder, _cli_linked_into_a_locked_folder,
+                                    _claude_linked_into_a_locked_folder, _workflow_linked_to_itself])
+def test_a_kit_reached_through_a_link_that_cant_be_followed_is_refused_on_a_ticket_branch(linked, layout):
+    root = linked("claude/build-1", layout)
+    assert _guard(root, PUSH) == "deny"
+    assert _guard(root, EDIT) == "deny"
+
+
+@pytest.mark.parametrize("folder, mode", [(".", 0), (".", 0o644), (".", 0o600), ("..", 0)])
+@pytest.mark.parametrize("branch", ["claude/build-1", "main"])
+def test_a_project_folder_that_cant_be_searched_is_refused(shape, folder, mode, branch):
+    """Its branch can't be read either, so every branch is refused."""
+    root = shape(branch, folder, mode, profile=NAMED, kit=True)
+    for event in (PUSH, EDIT, _bash("gh pr merge 12 --merge")):
+        assert _guard(root, event, cwd="/") == "deny", event
+
+
+@pytest.mark.parametrize("make", [
+    lambda root: (root / ".claude").write_text("", encoding="utf-8"),
+    lambda root: ((root / ".claude").mkdir(), (root / ".claude/workflow").write_text("", encoding="utf-8")),
+])
+def test_a_kit_path_that_is_a_file_reads_as_not_set_up(tmp_path, make):
+    root = _project(tmp_path, "claude/build-1", profile=None)
+    make(root)
+    assert _guard(root, PUSH) is None
+    assert _guard(root, PUSH, "ticket") == "deny"
+
+
 def test_a_detached_head_is_asked(shape):
     root = shape("claude/build-1", ".claude/workflow", profile=NAMED, kit=True)
     subprocess.run(GIT + ["-C", str(root), "checkout", "-q", "--detach"], check=True)
