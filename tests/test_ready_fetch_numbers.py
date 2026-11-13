@@ -251,6 +251,19 @@ def test_state_join_fetch_reads_past_an_issue_without_a_whole_number_number(tmp_
     assert state.get((tmp_path / "new.md").read_text())["joined"] == {"501": {"from": 378, "kind": "split"}}
 
 
+# ---------- the architecture page ----------
+
+
+def test_the_pages_rule_names_state_joins_read_past():
+    """The rule binds a command that needs every item's number, and names
+    `state join --fetch`, which reads past such an item, as no such command."""
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    line = next(l for l in page.splitlines() if l.startswith("- `_unnumbered_line`:"))
+    assert "A command that reads `_fetch`'s items by their number refuses" not in line
+    assert "needs every item's number" in line
+    assert "`workflow state join --fetch`" in line and "`state._candidates`" in line
+
+
 # ---------- the changelog ----------
 
 
