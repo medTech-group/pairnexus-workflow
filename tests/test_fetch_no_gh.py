@@ -117,6 +117,42 @@ def test_state_join_fetch_with_no_gh_keeps_its_own_wording(tmp_path, monkeypatch
     assert not (tmp_path / "new.md").exists()
 
 
+# ---------- one wording of a `gh` that can't be run (`fetch.not_run`) ----------
+
+
+def test_not_run_words_a_gh_that_cant_be_started():
+    assert fetch.not_run(FileNotFoundError(2, "No such file or directory", "gh")) == fetch.NOT_INSTALLED
+    assert fetch.not_run(PermissionError(13, "Permission denied", "gh")) == "couldn't run gh: Permission denied"
+    assert fetch.not_run(OSError("something else")) == "couldn't run gh: something else"
+
+
+def test_fetch_run_and_cli_fetch_word_it_through_the_one_helper(monkeypatch):
+    """`fetch._run` and `cli._fetch` both take their reason from
+    `fetch.not_run`, never a copy of its wording."""
+    from workflow import cli
+
+    def cant_start(*a, **k):
+        raise PermissionError(13, "Permission denied", "gh")
+
+    monkeypatch.setattr(subprocess, "run", cant_start)
+    monkeypatch.setattr(fetch, "not_run", lambda e: f"the one wording ({type(e).__name__})")
+    with pytest.raises(fetch.GhError) as got:
+        fetch._run(["api", "user"])
+    assert str(got.value) == "the one wording (PermissionError)"
+    with pytest.raises(cli.GhNotRun) as got:
+        cli._fetch("acme/demo", "issues")
+    assert got.value.said == "can't run `gh api repos/acme/demo/issues`: the one wording (PermissionError)"
+
+
+def test_the_page_lists_the_helper():
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    assert "Covers: scripts/workflow/fetch.py\n" in page
+    helpers = page[page.index("## Helpers"):page.index("## Rules")]
+    assert "\n- `not_run`: in `fetch.py`" in helpers
+    fetch_line = next(l for l in helpers.splitlines() if l.startswith("- `_fetch`: in `cli.py`"))
+    assert "`fetch.not_run`" in fetch_line and "`fetch._run`'s words" not in fetch_line
+
+
 # ---------- the changelog ----------
 
 

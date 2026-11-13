@@ -264,7 +264,7 @@ class FetchUnreadable(SystemExit):
 class GhNotRun(SystemExit):
     """`_fetch`'s refusal when `gh` couldn't be run at all (#857, #809): none
     on the PATH (`fetch.NOT_INSTALLED`), or one the system won't start (`couldn't
-    run gh: <why>`, as `fetch._run` words it). `said`, ``can't run `gh api
+    run gh: <why>`), in `fetch.not_run`'s words. `said`, ``can't run `gh api
     repos/<repo>/issues`: <why>``, is there for a caller with its own wording
     (`state join`); as a SystemExit, the one `workflow:` line the command
     prints, exit 1."""
@@ -312,7 +312,7 @@ def _fetch(repo: str, what: str) -> list[dict]:
     `reviews._shown`, as `_gave` does, here and in `fetch.by_page`'s own
     message, so it stays one line (#792). A `gh` that can't be run (none on
     the PATH, or one the system won't start) raises `GhNotRun` (#857, #809),
-    in `fetch._run`'s words.
+    in `fetch.not_run`'s words.
     """
     query = "issues?state=all&per_page=100" if what == "issues" else "pulls?state=open&per_page=100"
     path = f"repos/{repo}/{query}"
@@ -343,8 +343,8 @@ def _fetch(repo: str, what: str) -> list[dict]:
     def gh(*flags: str) -> subprocess.CompletedProcess:
         try:
             return subprocess.run(["gh", "api", *flags, path], capture_output=True, text=True)
-        except OSError as e:  # as `fetch._run` words it
-            why = fetch_mod.NOT_INSTALLED if isinstance(e, FileNotFoundError) else f"couldn't run gh: {e.strerror or e}"
+        except OSError as e:
+            why = fetch_mod.not_run(e)
             noun = "issues" if what == "issues" else "pulls"
             raise GhNotRun(f"can't run `gh api repos/{reviews_mod._shown(repo, len(repo))}/{noun}`: {why}") from None
 
