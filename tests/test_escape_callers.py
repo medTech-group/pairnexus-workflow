@@ -16,7 +16,7 @@ import pytest
 
 from changelog_notes import KIT, entry
 from test_doctor_cloud import NAMED, NEW, _doctor, _env_file, _no_gh, _project
-from test_merge_check import check, inputs, project  # noqa: F401  (the fixture)
+from test_merge_check import check, inputs, project, ruleset, run_  # noqa: F401  (the fixture)
 from test_protection_requests import cli as protection_cli, inp, put, recorded_ruleset  # noqa: F401  (the fixture)
 from workflow import doctor as doctor_mod
 from workflow import issues as issues_mod
@@ -137,6 +137,32 @@ def test_doctor_text_outside_ascii_prints_as_it_is(tmp_path):
     assert "workflow-ticket-é😀" in p.stdout, p.stdout
 
 
+# ---------- through each command's --json (the changelog note names it) ----------
+
+
+@pytest.mark.parametrize("name,shown", [("unit\u00a0tests", "unit\\u00a0tests"), ("unit\ntests", "unit\\ntests")])
+def test_merge_check_json_message_escapes_as_the_text_does(project, capsys, name, shown):
+    """A reason's `message` and `wording` in `--json` are written as the text
+    writes them: a no-break space escaped, a line break as `\\n`. The check's
+    own entry in `checks` keeps its name as it is."""
+    project.write(checks=(name,))
+    data = inputs()
+    data["rulesets"] = [ruleset(name)]
+    data["checks"]["check_runs"] = [run_(name, "failure")]
+    got, _ = check(project, capsys, data)
+    [r] = got["reasons"]
+    assert r["id"] == "checks_failed" and shown in r["message"] and shown in r["wording"]["new"]["message"], r
+    assert {"name": name, "state": "failing", "required": True} in got["checks"]
+
+
+def test_doctor_json_message_writes_a_line_break_in_a_path_as_n(tmp_path):
+    from test_doctor_architecture import _lines, _repo
+
+    root = _repo(tmp_path, {"src/a.py": "x\n", "docs/architecture/p\nq.md": "# P\n"})
+    ln = _lines(root)["kit.architecture.no_covers"]
+    assert "docs/architecture/p\\nq.md" in ln.as_dict("developer")["message"], ln
+
+
 @pytest.mark.parametrize("raw,shown", [("\x9b", "\\u009b"), ("\x7f", "\\u007f"), ("‮", "\\u202e")])
 def test_protection_text_escapes_a_c1_code_del_and_a_bidi_override(repo, inp, raw, shown):
     """json.dumps leaves these as they are; the shared helper escapes them,
@@ -171,3 +197,13 @@ def test_the_changelog_note():
     assert "`issues.escape_unprintable`" in note
     assert "`VERSION` is unchanged" in note
     assert "tests/test_escape_callers.py" in note
+
+
+def test_the_changelog_note_names_the_json_change():
+    """merge-check's and doctor's `--json` messages change as their text
+    does, so the note says so and doesn't call `--json` unchanged."""
+    note = entry("#805, found in the review of #776's pull request")
+    assert "`--json` output is unchanged" not in note
+    json_line = next(l for l in note.splitlines() if l.startswith("- **Changed in merge-check's and doctor's `--json`"))
+    for field in ("`message`", "`fix`", "`wording`", "`notes`", "`files`", "`checks`"):
+        assert field in json_line, field
