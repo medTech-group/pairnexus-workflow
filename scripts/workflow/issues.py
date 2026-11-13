@@ -79,10 +79,22 @@ def escape_surrogates(text: str) -> str:
     return _SURROGATE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
 
 
-# Control characters (C0, DEL, C1), the line and paragraph separators, and the
-# bidirectional embeddings, overrides and isolates: each could start a line, or
-# be acted on by a terminal, if printed as it is (#776).
-_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+# Unicode's Cc set: the control characters C0, DEL and C1 (#823).
+_CC = "\x00-\x1f\x7f-\x9f"
+CC = re.compile(f"[{_CC}]")
+
+
+def has_control(text: str) -> bool:
+    """Whether the text holds a control character, Unicode's Cc set exactly
+    (C0, DEL and C1): the kit's one test of that set (#823). A separator, a
+    bidirectional override and a backtick aren't in it."""
+    return CC.search(text) is not None
+
+
+# The Cc set, the line and paragraph separators, and the bidirectional
+# embeddings, overrides and isolates: each could start a line, or be acted on
+# by a terminal, if printed as it is (#776).
+_CONTROL = re.compile(f"[{_CC}\u2028\u2029\u202a-\u202e\u2066-\u2069]")
 _NAMED = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 
 

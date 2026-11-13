@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**One shared test for control characters** (#823, found in the review of #821's pull request). The profile's `project.repo` check kept its own copy of Unicode's Cc set (`profile.CONTROL`), beside the copies in `issues.py`, `research.py` and `protection.py`.
+
+- **Shared now:** `issues.has_control` is the kit's one test of the Cc set (U+0000 to U+001F, U+007F to U+009F). The profile's `project.repo` check calls it, and `issues.escape_controls` builds its set from the same one, adding the separators and the bidirectional characters as before. `profile.CONTROL` is gone.
+- **Unchanged:** what is refused and taken. `project.repo` is still refused for exactly a Cc character, and U+202E or a backtick is still taken (the rest of the `owner/name` rule is #327's). `research`'s page check (Cc less tab, line feed, form feed and carriage return) and `protection`'s check names (Cc, surrogates and separators) keep their own sets, since neither is exactly Cc.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_control_set.py`.
+
 **The profile refuses a `project.repo` holding a control character** (#821, found in the review of #792's pull request). The profile's check took any `project.repo` with one `/`, so `repo = "acme/de\u0000mo"` was taken, and `workflow status --fetch` (and `workflow ready --fetch` and `workflow state join --fetch`) ended in `ValueError: embedded null byte` when it ran `gh api` with it.
 
 - **Refused now** when the profile is read, in one line worded like the existing one: `project.repo must be owner/repo, without control characters`, for a NUL or any other control character (Unicode's Cc: U+0000 to U+001F, U+007F to U+009F; a newline or a tab among them). `workflow profile check`, `workflow status --fetch`, `workflow ready --fetch` and `workflow state join --fetch` print it as `workflow: project.repo must be owner/repo, without control characters`, exit 1, with nothing on standard output; no command reaches `gh` with it.
