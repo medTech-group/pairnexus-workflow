@@ -7,9 +7,11 @@ doctor`. So `workflow profile check`, `workflow ready --fetch` and `workflow
 state join --fetch` print one `workflow: …` line and exit 1, never a
 traceback. Seams: `profile.load`, and each command through `cli.main`."""
 
+import io
 import json
 import os
 import pathlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -242,3 +244,59 @@ def test_the_notes_name_the_commands_that_stop_on_it_not_every_command(text):
     assert "the other commands that stop on a bad profile" in said
     for name in ("`workflow profile check`", "`workflow ready --fetch`", "`workflow state join --fetch`"):
         assert name in said
+
+
+# ---------- the guard and merge-check on a profile they can't read (round 1 of the review) ----------
+
+
+def _a_pipe(root):
+    (root / PROFILE_PATH).parent.mkdir(parents=True)
+    os.mkfifo(root / PROFILE_PATH)  # opened, it would block the read
+
+
+SHAPES = [*CASES, pytest.param(_a_pipe, NOT_A_FILE, id="a-pipe")]
+RESTORES = ["git checkout -- .claude/workflow", "git restore .claude/workflow"]
+
+
+def _guard(monkeypatch, capsys, root, command):
+    """`workflow hook guard` in a ticket session, a Bash `command` on stdin;
+    the deny reason, or None when it lets it through."""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    monkeypatch.setenv("WORKFLOW_ROLE", "ticket")
+    monkeypatch.chdir(root)
+    event = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(root)}
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()), encoding="utf-8"))
+    capsys.readouterr()
+    assert cli.main(["hook", "guard"]) == 0
+    out = capsys.readouterr().out
+    if not out.strip():
+        return None
+    hook = json.loads(out)["hookSpecificOutput"]
+    assert hook["permissionDecision"] == "deny"
+    return hook["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("make, said", SHAPES)
+def test_the_guard_refuses_all_but_the_restore_in_a_ticket_session(tmp_path, monkeypatch, capsys, make, said):
+    make(tmp_path)
+    for command in ("git push origin feature", "ls"):
+        reason = _guard(monkeypatch, capsys, tmp_path, command)
+        assert reason is not None, command
+        assert reason.startswith(f"[workflow guard, ticket session] the profile is invalid, so nothing can be checked: {said}. ")
+        assert "the guard failed" not in reason and str(tmp_path) not in reason
+    for command in RESTORES:
+        assert _guard(monkeypatch, capsys, tmp_path, command) is None, command
+
+
+@pytest.mark.parametrize("make, said", SHAPES)
+def test_merge_check_gives_the_profiles_mistake_as_its_reason(tmp_path, monkeypatch, capsys, make, said):
+    make(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("WORKFLOW_EXPERIENCE", "developer")
+    capsys.readouterr()
+    assert cli.main(["merge-check", "--json"]) == 0
+    got = json.loads(capsys.readouterr().out)
+    assert got["decision"] == "not_yet"
+    [reason] = [r for r in got["reasons"] if r.get("input") == "profile"]
+    assert reason["message"] == f"Not yet: couldn't read the profile: {said}."
+    assert str(tmp_path) not in json.dumps(got)
