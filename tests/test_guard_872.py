@@ -29,14 +29,14 @@ FOLDERS = [".claude", ".claude/workflow", ".claude/workflow/bin"]
 NAMED = VALID.replace("[project]\n", '[project]\nname = "notes"\n', 1)
 
 
-def _guard(root, event, role=None, cwd=None):
+def _guard(root, event, role=None, cwd=None, seconds=SECONDS):
     """The hook command's decision, or None when it prints nothing."""
     env = {"PATH": os.environ["PATH"], "HOME": str(root), "CLAUDE_PROJECT_DIR": str(root)}
     if role is not None:
         env["WORKFLOW_ROLE"] = role
     p = subprocess.run(
         _as_anyone([shutil.which("sh"), "-c", vendor.hook_command("guard")]), input=json.dumps(dict(event, cwd=str(root))),
-        capture_output=True, text=True, env=env, cwd=cwd or root, timeout=SECONDS,
+        capture_output=True, text=True, env=env, cwd=cwd or root, timeout=seconds,
     )
     return _decision(p)
 
@@ -148,6 +148,17 @@ def test_a_readable_profile_s_ticket_branch_decides(shape, pattern, branch, want
     profile = NAMED.replace('"claude/build-*"', f'"{pattern}"')
     root = shape(branch, ".claude/workflow/bin", profile=profile, kit=True)
     assert _guard(root, PUSH) == wanted
+
+
+@pytest.mark.parametrize("make", [os.mkfifo, lambda path: os.symlink("/dev/zero", path)], ids=["1", "2"])
+@pytest.mark.parametrize("branch, wanted", [("claude/build-1", "deny"), ("main", "ask")])
+def test_a_profile_that_is_not_a_regular_file_is_not_read(shape, make, branch, wanted):
+    """The default `run.ticket_branch` decides, at once."""
+    root = shape(branch, ".claude/workflow/bin", profile=NAMED, kit=True)
+    profile = root / ".claude/workflow/profile.toml"
+    profile.unlink()
+    make(profile)
+    assert _guard(root, PUSH, seconds=10) == wanted
 
 
 def test_a_ticket_branch_stays_refused_under_the_ticket_rule(linked):

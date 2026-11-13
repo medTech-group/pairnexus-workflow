@@ -120,15 +120,15 @@ _ROLE = (
 _MISTYPED = 'W=; case "$R" in ""|ticket|conductor|attended|*[!a-z0-9_-]*) ;; *) W=1;; esac; '
 # With WORKFLOW_ROLE unset and the kit set up, or there but unreadable (U):
 # the project directory's branch matching the profile's run.ticket_branch (its
-# first `ticket_branch = "…"` line, as _old_python reads it, or its default
-# when the profile can't be read) means a ticket session, only by its branch
+# first `ticket_branch = "…"` line, as _old_python reads it, read only when
+# the profile is a regular file, or its default otherwise) means a ticket session, only by its branch
 # (W). Without Python the event's cwd can't be read, so a worktree's own
 # branch isn't seen.
 _BRANCH = (
     'P="$CLAUDE_PROJECT_DIR/.claude/workflow/profile.toml"; '
     'if [ -z "$R" ] && { [ -f "$P" ] || [ -n "$U" ]; }; then '
     'B=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null); '
-    """T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P" 2>/dev/null | head -n 1); """
+    """T=; if [ -f "$P" ]; then T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P" 2>/dev/null | head -n 1); fi; """
     f'case "$B" in HEAD|"") ;; ${{T:-{_old_python.DEFAULT_TICKET_BRANCH}}}) R=ticket; W=1;; esac; fi; '
 )
 # Under code_writers = "ticket" (`fallback.sh --ticket-rule`, #342), a session
