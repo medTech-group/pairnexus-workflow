@@ -422,7 +422,7 @@ def cmd_profile(a) -> int:
     warnings = profile_mod.check(prof)
     _out({"ok": True, "warnings": warnings, **profile_mod.summary(prof)})
     for w in warnings:
-        print(f"warning: {w}", file=sys.stderr)
+        print(f"warning: {issues_mod.escape_unprintable(w)}", file=sys.stderr)
     return 0
 
 
