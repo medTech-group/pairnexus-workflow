@@ -606,6 +606,8 @@ def _read_profile(root: Path):
         return _load(root, required=False), None  # `load` words a file it can't read (#829)
     except ProfileError as e:
         return None, str(e)
+    except ValueError as e:  # tomllib's own, beside TOMLDecodeError: an integer too long to read
+        return None, f"{PROFILE_PATH} can't be read ({type(e).__name__})"
 
 
 def cmd_doctor(a) -> int:

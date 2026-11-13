@@ -188,6 +188,28 @@ def test_status_and_doctor_read_it_in_loads_words(said):
     assert cli._read_profile(project_root()) == (None, said)
 
 
+# `tomllib` refuses an integer longer than Python's limit on digits (4300)
+# with a plain `ValueError`, not a `TOMLDecodeError`: `load` lets it through,
+# and status and doctor still name it as they did before #832.
+HUGE_INTEGER = '[project]\nname = "demo"\nrepo = "acme/demo"\n[run]\nmax_parallel = ' + "1" * 4301 + "\n"
+CANT_READ_VALUE = f"{PROFILE_PATH} can't be read (ValueError)"
+
+
+def test_status_and_doctor_name_a_profile_tomllib_refuses_with_a_value_error(tmp_path):
+    from test_doctor import _line, _project
+    from test_status_local_gaps import _status
+
+    root = _project(tmp_path, profile=HUGE_INTEGER)
+    assert cli._read_profile(root) == (None, CANT_READ_VALUE)
+    gap = f"The kit's profile ({PROFILE_PATH}, its settings for this project) has a mistake, so the kit can't use it: {CANT_READ_VALUE}."
+    line = _line(tmp_path, root, "kit.profile")
+    assert (line["status"], line["message"]) == ("gap", gap)
+    report = json.loads(_status(tmp_path, root, "--json"))
+    assert report["profile_error"] is True
+    assert {g["id"]: g for g in report["local_gaps"]}["kit.profile"]["message"] == gap
+    assert "Kit: set up, but its profile has an error (kit.profile)" in _status(tmp_path, root)
+
+
 # Each caller that reads the profile through `_load`, as the page's `_load` line names it.
 THROUGH_LOAD = {
     "_charter_change_problems": "a charter change",
