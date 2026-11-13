@@ -5,9 +5,14 @@ Since #829, `profile.load` refuses a profile file it can't read with a
 `ProfileError` in its own words (`… isn't UTF-8 text`, `… isn't a file`,
 `… can't be read (<error>)`). Its callers in `cli.py` pass those words on,
 with their own context after them where they keep one: a charter change
-(`state put`), `preview --fetch` and `research`. Seams: each command through
-`cli.main`, and `cli.py`'s source for the handlers around `load`."""
+(`state put`), `preview --fetch`, `research`, `merge-check`, `review-record`,
+`status` and `doctor`. Those read the profile through `cli._load`, which
+refuses the `OSError` `load` still lets through (#837) in the same words.
+Seams: each command through `cli.main` (`review-record`'s hashes and
+`_read_profile` called directly), `cli.py`'s source for the handlers around
+`load`, and the architecture page's lines."""
 
+import argparse
 import ast
 import json
 from pathlib import Path
@@ -115,19 +120,102 @@ def _caught(handler):
     return {n.id for n in names if isinstance(n, ast.Name)}
 
 
-@pytest.mark.parametrize("name", ["_charter_change_problems", "cmd_preview", "_research_patterns", "_page_profile"])
-def test_no_handler_around_load_catches_the_read_errors_load_words(name):
-    """`load` turns a file it can't decode into a `ProfileError`: a caller
-    that catches `UnicodeDecodeError` (or `OSError` beside it, wording it)
-    around `load` keeps a second wording of its own."""
-    fn = _functions()[name]
-    tries = [t for t in ast.walk(fn) if isinstance(t, ast.Try) and any(_calls_load(s) for s in t.body)]
-    assert tries, f"{name} no longer calls load inside a try"
-    for t in tries:
+def _tries_around_load():
+    """Every `try` in `cli.py` whose body calls `load` (or `_load`), with its function's name."""
+    return [(name, t) for name, fn in _functions().items() for t in ast.walk(fn) if isinstance(t, ast.Try) and any(_calls_load(s) for s in t.body)]
+
+
+# What catches the `OSError` a read can raise, as `except` names it.
+READ_ERRORS = {"OSError", "IOError", "EnvironmentError", "Exception", "BaseException"}
+
+
+def test_the_walk_finds_every_caller_that_refuses_a_profile_it_cant_read():
+    assert {"_load", "_read_profile", "_page_profile", "_charter_change_problems", "cmd_merge_check", "cmd_preview", "_research_patterns", "_own_hashes", "_measure"} <= {n for n, _ in _tries_around_load()}
+
+
+def test_no_handler_around_load_catches_the_read_errors_load_words():
+    """`load` refuses a profile file it can't read with a `ProfileError` in its
+    own words, and `_load` refuses the `OSError` it still lets through in the
+    same words: any other caller in `cli.py` that catches `UnicodeDecodeError`
+    or `OSError` around them keeps a second wording of its own. `_page_profile`
+    words nothing: it renders the page without a profile."""
+    for name, t in _tries_around_load():
         for h in t.handlers:
-            caught = _caught(h)
-            assert "UnicodeDecodeError" not in caught, (name, caught)
-            assert "OSError" not in caught or name == "_page_profile", (name, caught)
+            caught = _caught(h) if h.type is not None else {"BaseException"}
+            assert "UnicodeDecodeError" not in caught, (name, h.lineno, caught)
+            assert not caught & READ_ERRORS or name in ("_load", "_page_profile"), (name, h.lineno, caught)
+
+
+def test_load_wrapper_refuses_an_oserror_in_loads_words_and_page_profile_words_none():
+    [(_, t)] = [(n, t) for n, t in _tries_around_load() if n == "_load"]
+    [h] = t.handlers
+    assert _caught(h) == {"OSError"}
+    assert [ast.unparse(s) for s in h.body] == ["raise unreadable(e) from None"]
+    [(_, t)] = [(n, t) for n, t in _tries_around_load() if n == "_page_profile"]
+    [h] = t.handlers
+    assert [ast.unparse(s) for s in h.body] == ["return None"]
+
+
+def test_merge_check_gives_loads_words_as_its_reason(monkeypatch, capsys, said):
+    monkeypatch.setenv("WORKFLOW_EXPERIENCE", "developer")
+    assert cli.main(["merge-check", "--json"]) == 0
+    got = json.loads(capsys.readouterr().out)
+    [reason] = [r for r in got["reasons"] if r.get("input") == "profile"]
+    assert reason["message"] == f"Not yet: couldn't read the profile: {said}."
+
+
+def test_review_record_measure_gives_loads_words(tmp_path, capsys, said):
+    assert cli.main(["review-record", "--measure", "--commit", "0" * 40]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == f"workflow review-record: can't measure: couldn't read the profile: {said}\n"
+    assert str(tmp_path) not in err
+
+
+def test_review_records_hashes_note_gives_loads_words(tmp_path, capsys, said):
+    from workflow import own_changes
+
+    assert cli._own_hashes(argparse.Namespace(base=None), "0" * 40) == own_changes.UNKNOWN_HASHES
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == f"workflow review-record: couldn't read the profile for the base branch ({said}): {own_changes.UNKNOWN} for diff and lines\n"
+    assert str(tmp_path) not in err
+
+
+def test_status_and_doctor_read_it_in_loads_words(said):
+    from workflow.profile import project_root
+
+    assert cli._read_profile(project_root()) == (None, said)
+
+
+# Each caller that reads the profile through `_load`, as the page's `_load` line names it.
+THROUGH_LOAD = {
+    "_charter_change_problems": "a charter change",
+    "cmd_preview": "`preview --fetch`",
+    "_research_patterns": "`research`",
+    "cmd_merge_check": "`merge-check`",
+    "_own_hashes": "`review-record`",
+    "_measure": "`review-record`",
+    "_read_profile": "`cli._read_profile` (`status`, `doctor`)",
+}
+
+
+def _page_line(name):
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    return next(line for line in page.splitlines() if line.startswith(f"- `{name}`:"))
+
+
+def test_the_page_names_the_callers_that_read_it_through_the_wrapper():
+    """The page's `load` line says no other caller in `cli.py` words the read's
+    errors its own way (the walk above holds it to that); its `_load` line
+    names each caller that reads the profile through `_load`."""
+    callers = {n for n, fn in _functions().items() if n != "_load" and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "_load" for c in ast.walk(fn))}
+    assert callers == set(THROUGH_LOAD)
+    line = _page_line("_load")
+    for said in THROUGH_LOAD.values():
+        assert said in line, said
+    assert "never catch the read's errors to word them their own way" in _page_line("load")
+    assert "`load` and `cli._load` both give them" in _page_line("unreadable")
 
 
 def test_page_profiles_comment_no_longer_says_a_file_that_isnt_utf8_is_a_value_error():

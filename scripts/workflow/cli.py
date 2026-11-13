@@ -601,11 +601,9 @@ def _read_profile(root: Path):
     """(the profile, None), or (None, `profile check`'s error) for one that
     can't be used, as doctor reads it; (None, None) with no profile."""
     try:
-        return load(root, required=False), None  # `load` words a file it can't read (#829)
+        return _load(root, required=False), None  # `load` words a file it can't read (#829)
     except ProfileError as e:
         return None, str(e)
-    except (OSError, ValueError) as e:
-        return None, f"{PROFILE_PATH} can't be read ({type(e).__name__})"
 
 
 def cmd_doctor(a) -> int:
@@ -1258,11 +1256,9 @@ def cmd_merge_check(a) -> int:
     inputs = _json_inputs(a, [*merge_mod.INPUTS, *merge_mod.WHEN_NEEDED, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
     prof, profile_error = None, None
     try:
-        prof = load()  # its protected paths and required checks are rules: none found is a reason
-    except ProfileError as e:
+        prof = _load()  # its protected paths and required checks are rules: none found is a reason
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         profile_error = str(e)
-    except (OSError, UnicodeDecodeError) as e:
-        profile_error = f"can't read {PROFILE_PATH}: {getattr(e, 'strerror', None) or e}"
     root = prof.root if prof else project_root()
     charter = inputs.pop("charter", None)
     if a.fetch is not None:
@@ -1923,8 +1919,8 @@ def _own_hashes(a, commit: str) -> own_changes_mod.Hashes:
     the record still counts, and standard output stays the record alone."""
     unknown = f"{own_changes_mod.UNKNOWN} for diff and lines"
     try:
-        prof = load()
-    except (ProfileError, OSError, UnicodeDecodeError) as e:
+        prof = _load()
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         if _given_base(a) is None:
             _record_note(f"couldn't read the profile for the base branch ({e}): {unknown}")
             return own_changes_mod.UNKNOWN_HASHES
@@ -1967,8 +1963,8 @@ def _measure(a) -> int:
         print("workflow review-record: --measure needs --commit, the full 40-character SHA to measure (`git rev-parse HEAD`)", file=sys.stderr)
         return 2
     try:
-        prof = load()
-    except (ProfileError, OSError, UnicodeDecodeError) as e:
+        prof = _load()
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         print(f"workflow review-record: can't measure: couldn't read the profile: {e}", file=sys.stderr)
         return 1
     try:
