@@ -15,10 +15,6 @@ from workflow import charter, cli, state
 from workflow import profile as profile_mod
 
 REFUSAL = "workflow: project.repo must be owner/repo, without control characters"
-STATUS_LINE = (
-    "workflow status: the kit's profile has an error "
-    "(project.repo must be owner/repo, without control characters), so issues weren't read (see kit.profile)"
-)
 
 CONTROLS = pytest.mark.parametrize(
     "repo_toml",
@@ -61,9 +57,9 @@ def _refused(capsys, *args) -> list[str]:
 
 
 def _status_fetch(capsys) -> list[str]:
-    """`workflow status --fetch` with the profile in error: as for any profile
-    error, it reads no issues, says why in one line on standard error and
-    still prints its report, exit 0 (`test_status_local_gaps`'s
+    """`workflow status --fetch` with any other profile error: it reads no
+    issues, says why in one line on standard error and still prints its
+    report, exit 0 (`test_status_local_gaps`'s
     `test_a_profile_error_with_fetch_reads_no_issues_and_says_why`)."""
     assert cli.main(["status", "--fetch"]) == 0
     out = capsys.readouterr()
@@ -75,7 +71,17 @@ def _status_fetch(capsys) -> list[str]:
 def test_a_nul_in_the_repo_stops_status_fetch_in_one_line_before_gh(monkeypatch, capsys, tmp_path):
     _project(monkeypatch, tmp_path, '"acme/de\\u0000mo"')
     gh = fake_gh.install(tmp_path, monkeypatch, {})
-    assert _status_fetch(capsys) == [STATUS_LINE]
+    assert _refused(capsys, "status", "--fetch") == [REFUSAL]
+    assert gh.calls() == []
+
+
+def test_another_profile_error_still_lets_status_fetch_print_its_report(monkeypatch, capsys, tmp_path):
+    """Only the control-character refusal stops `status --fetch`: a repo
+    without its `/` is still a profile error the report shows, exit 0."""
+    _project(monkeypatch, tmp_path, '"acme"')
+    gh = fake_gh.install(tmp_path, monkeypatch, {})
+    lines = _status_fetch(capsys)
+    assert len(lines) == 1 and lines[0].startswith("workflow status: the kit's profile has an error")
     assert gh.calls() == []
 
 
@@ -89,7 +95,7 @@ def test_profile_check_names_the_same_problem(monkeypatch, capsys, tmp_path, rep
 def test_status_fetch_never_reaches_gh_with_a_control_character(monkeypatch, capsys, tmp_path, repo_toml):
     _project(monkeypatch, tmp_path, repo_toml)
     gh = fake_gh.install(tmp_path, monkeypatch, {})
-    assert _status_fetch(capsys) == [STATUS_LINE]
+    assert _refused(capsys, "status", "--fetch") == [REFUSAL]
     assert gh.calls() == []
 
 
