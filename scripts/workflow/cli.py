@@ -332,6 +332,15 @@ def _unnumbered(items: list[dict], what: str) -> str | None:
     return f"{what}: {n} of {len(items)} {'has' if n == 1 else 'have'} no whole-number number" if n else None
 
 
+def _unnumbered_line(repo: str, issues: list[dict], prs: list[dict]) -> str | None:
+    """The one `workflow:` line refusing `_fetch`'s issues or pull requests
+    from `repo` when any has no whole-number number (`_unnumbered`), the
+    issues named first, or None: what `status --fetch` (#775) and `ready
+    --fetch` (#790) print on standard error before exiting 1."""
+    why = _unnumbered(issues, _gave(repo, "issues")) or _unnumbered(prs, _gave(repo, "pulls"))
+    return f"workflow: can't read {why} ({FETCH_INSTEAD})" if why else None
+
+
 def _fetch_items(values, deepest: int | None = None, only_objects: bool = False) -> list[dict]:
     """The objects in `_fetch`'s pages, in order, however deep the lists nest,
     read without recursion (#788). With `deepest`, lists nested deeper than
@@ -387,6 +396,10 @@ def cmd_ready(a) -> int:
         if not prof:
             raise SystemExit("--fetch needs a profile (project.repo)")
         issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
+        refused = _unnumbered_line(prof.repo, issues, prs)  # as `status --fetch` refuses them (#790)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
     else:
         if not a.issues or not a.prs:
             raise SystemExit("give --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
@@ -507,9 +520,9 @@ def _status(a) -> int:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
             issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
-            why = _unnumbered(issues, _gave(prof.repo, "issues")) or _unnumbered(prs, _gave(prof.repo, "pulls"))
-            if why:
-                print(f"workflow: can't read {why} ({FETCH_INSTEAD})", file=sys.stderr)
+            refused = _unnumbered_line(prof.repo, issues, prs)
+            if refused:
+                print(refused, file=sys.stderr)
                 return 1
     elif a.issues or a.prs:
         if not a.issues or not a.prs:
