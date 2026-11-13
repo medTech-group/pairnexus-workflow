@@ -1,16 +1,14 @@
-"""The guard's read of the profile without the kit (#833): only a regular file.
+"""A security problem in the guard (#833): the guard reads the profile only as a regular file.
 
 Where the kit can't read the profile, the guard still reads two plain lines
 of it as text: `run.ticket_branch` (`_old_python._ticket_branch`, which the CLI
-uses too) and `ruleset` (`fallback._profile_text`). A profile path that isn't a
-regular file (a pipe, or a symlink to one) is never opened: it reads as a
-profile that can't be read, as a directory always has, so the guard answers at
-once in an attended session as in a ticket session. An ordinary profile, or a
-symlink to one, reads as before.
+uses too) and `ruleset` (`fallback._profile_text`). Something at the profile's
+path that isn't a regular file reads as a profile that can't be read. An
+ordinary profile, or a symlink to one, reads as before.
 
 Seams: `workflow hook guard` through the entry point on this Python (the kit's
 path) and through the old-Python fallback's own entry, each in a subprocess
-with a timeout, so no case can hold up the suite; and the two readers in-process on regular files only."""
+with a timeout; and the two readers in-process."""
 
 import json
 import os
@@ -26,7 +24,7 @@ from workflow import _old_python, fallback
 
 KIT = Path(__file__).resolve().parents[1]
 PROFILE = Path(".claude/workflow/profile.toml")
-SECONDS = 20  # far above the guard's own budget
+SECONDS = 20
 
 LS = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
 PUSH = {"tool_name": "Bash", "tool_input": {"command": "git push origin feature"}}
@@ -44,11 +42,11 @@ def _project(tmp_path, branch="main"):
     return root
 
 
-def _a_pipe(root, tmp_path):
-    os.mkfifo(root / PROFILE)  # made here, never opened
+def _shape_1(root, tmp_path):
+    os.mkfifo(root / PROFILE)
 
 
-def _a_link_to_a_pipe(root, tmp_path):
+def _shape_2(root, tmp_path):
     target = tmp_path / "elsewhere"
     os.mkfifo(target)
     os.symlink(target, root / PROFILE)
@@ -63,7 +61,7 @@ def _shape_4(root, tmp_path):
 
 
 MAKES = [
-    pytest.param(_a_pipe, id="pipe"), pytest.param(_a_link_to_a_pipe, id="link-to-pipe"),
+    pytest.param(_shape_1, id="shape-1"), pytest.param(_shape_2, id="shape-2"),
     pytest.param(_shape_3, id="shape-3"), pytest.param(_shape_4, id="shape-4"),
 ]
 
@@ -93,12 +91,12 @@ def _guard(path, root, event, role=None):
     return p.returncode, out["permissionDecision"], out["permissionDecisionReason"]
 
 
-# ---------- the guard answers at once ----------
+# ---------- the guard ----------
 
 
 @pytest.mark.parametrize("path", PATHS)
 @pytest.mark.parametrize("make", MAKES)
-def test_an_attended_session_gets_the_fallback_at_once(tmp_path, path, make):
+def test_off_a_ticket_branch_a_push_is_asked(tmp_path, path, make):
     root = _project(tmp_path)
     make(root, tmp_path)
     assert _guard(path, root, LS) == (0, None, "")
@@ -108,7 +106,7 @@ def test_an_attended_session_gets_the_fallback_at_once(tmp_path, path, make):
 
 @pytest.mark.parametrize("path", PATHS)
 @pytest.mark.parametrize("make", MAKES)
-def test_on_a_ticket_branch_without_a_role_every_tool_is_refused(tmp_path, path, make):
+def test_on_a_ticket_branch_every_tool_is_refused(tmp_path, path, make):
     """Something is at the profile's path but it isn't a regular file: the
     kit is set up, so the default `run.ticket_branch` decides, as for an
     invalid profile."""
@@ -140,7 +138,7 @@ def test_without_the_kit_session_start_says_every_tool_is_refused(tmp_path, make
 
 @pytest.mark.parametrize("path", PATHS)
 @pytest.mark.parametrize("make", MAKES)
-def test_a_ticket_session_is_still_refused_at_once(tmp_path, path, make):
+def test_a_ticket_session_is_still_refused(tmp_path, path, make):
     root = _project(tmp_path)
     make(root, tmp_path)
     for event in (LS, PUSH):

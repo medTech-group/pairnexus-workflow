@@ -5,7 +5,7 @@
 **A security problem in the guard is fixed** (#833; #851 was its duplicate). Its details stay with the owner.
 
 - **Unchanged:** an ordinary profile reads as before.
-- **For projects updating:** nothing to do; the fix reaches a project with the kit's next update. `VERSION` is unchanged. Tests: `tests/test_guard_profile_not_a_regular_file.py`.
+- **For projects updating:** nothing to do; the fix reaches a project with the kit's next update. `VERSION` is unchanged. Tests: `tests/test_guard_833.py`.
 
 **`profile.load` and `workflow doctor` word a file they can't read through one helper** (#836, split out of #829's pull request; covers #847's cases too). `profile.load` and doctor's two file readers (`doctor._file` and `doctor._read_text`) each kept their own check of a file they can't read, with the same words: `isn't a file`, `isn't UTF-8 text`, `can't be read (<the error's type>)`.
 

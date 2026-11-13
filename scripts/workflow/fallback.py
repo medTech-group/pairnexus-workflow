@@ -147,9 +147,8 @@ def solo(root):
 
 
 def _profile_text(root):
-    """The profile's text under `root`, or None when it can't be read. Read
-    only when it is a regular file (or a symlink to one), and opened without
-    waiting: a directory or a pipe reads as a profile that can't be read."""
+    """The profile's text under `root`, or None when it can't be read. Only a
+    regular file (or a symlink to one) is read."""
     path = os.path.join(str(root), PROFILE)
     try:
         if not os.path.isfile(path):
