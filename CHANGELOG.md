@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**One shared test for control characters** (#823, found in the review of #821's pull request). The profile's `project.repo` check kept its own copy of Unicode's Cc set (`profile.CONTROL`), beside the copies in `issues.py`, `research.py` and `protection.py`.
+
+- **Shared now:** `issues.has_control` is the kit's one test of the Cc set (U+0000 to U+001F, U+007F to U+009F). The profile's `project.repo` check calls it, and `issues.escape_controls` builds its set from the same one, adding the separators and the bidirectional characters as before. `profile.CONTROL` is gone.
+- **Unchanged:** what is refused and taken. `project.repo` is still refused for exactly a Cc character, and U+202E or a backtick is still taken (the rest of the `owner/name` rule is #327's). `research`'s page check (Cc less tab, line feed, form feed and carriage return) and `protection`'s check names (Cc, surrogates and separators) keep their own sets, since neither is exactly Cc.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_control_set.py`.
+
 **`workflow ready` and `workflow status` say standard input is already `--issues`'s when `--prs` is `-` too** (#794, found in the review of #779's pull request). With `--issues -` and `--prs -` both, `--issues` read standard input whole and `--prs` found nothing left, so `workflow ready --issues - --prs - < issues.json` (and `workflow status` the same way) printed `` workflow: can't read standard input (-): it is empty ``, exit 1, though it wasn't empty.
 
 - **Refused in one line now,** before either is read, on standard error, nothing on standard output, exit 1, with or without `--json`: `` workflow ready: --prs: standard input (-) is already --issues's: only one file can be read from it `` (`workflow status:` for `status`), the words `ready` gives `--permissions` on standard input `--prs` already read. One helper, `cli._stdin_taken_line`, gives both commands the line, and one, `cli._stdin_taken`, the words, for it, for `--permissions` and for the commands that read their files as merge-check does, so they stay alike.

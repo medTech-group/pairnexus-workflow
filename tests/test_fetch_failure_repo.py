@@ -13,7 +13,7 @@ import pytest
 import fake_gh
 from changelog_notes import entry
 from workflow import charter, cli, fetch, state
-from workflow import profile as profile_mod
+from workflow import issues as issues_mod
 
 QUERY = "issues?state=all&per_page=100"
 AGAIN = "Fetch with the GitHub MCP tools instead and pass --issues/--prs files."
@@ -34,7 +34,7 @@ def _project(monkeypatch, tmp_path, repo_toml: str = '"acme/demo"'):
     # (`tests/test_profile_repo_control.py`), so the newline cases reach
     # `_fetch` only past that check: they still test that `_fetch` shows any
     # repo it is given escaped.
-    monkeypatch.setattr(profile_mod, "CONTROL", re.compile(r"(?!)"))
+    monkeypatch.setattr(issues_mod, "CC", re.compile(r"(?!)"))  # the shared Cc test, `issues.has_control` (#823)
     (tmp_path / ".claude/workflow").mkdir(parents=True)
     (tmp_path / ".claude/workflow/profile.toml").write_text(f'[project]\nname = "demo"\nrepo = {repo_toml}\n', encoding="utf-8")
     monkeypatch.chdir(tmp_path)

@@ -12,7 +12,7 @@ import pytest
 import fake_gh
 from changelog_notes import entry
 from workflow import cli
-from workflow import profile as profile_mod
+from workflow import issues as issues_mod
 
 ISSUE = {"number": 12, "title": "Add notes", "state": "open", "labels": [], "body": ""}
 PR = {"number": 30, "title": "Notes list", "state": "open", "head": {"ref": "claude/build-12"}}
@@ -119,7 +119,7 @@ def test_the_repo_is_shown_escaped(monkeypatch, capsys, tmp_path, repo_toml, rep
     # The profile refuses a control character in project.repo since #821
     # (`tests/test_profile_repo_control.py`): past that check, this still
     # tests that `_gave` shows any repo it is given escaped.
-    monkeypatch.setattr(profile_mod, "CONTROL", re.compile(r"(?!)"))
+    monkeypatch.setattr(issues_mod, "CC", re.compile(r"(?!)"))  # the shared Cc test, `issues.has_control` (#823)
     _project(monkeypatch, tmp_path, repo_toml)
     no_number = [{"title": "no number"}]
     routes = {f"repos/{repo}/issues": fake_gh.pages(no_number), f"repos/{repo}/pulls": fake_gh.pages([PR])}
