@@ -119,7 +119,12 @@ def escape_unprintable(text: str) -> str:
 
 
 def _escaped(c: str) -> str:
-    """One character as JSON escapes it: `\\n`, `\\r`, `\\t`, else `\\u001b`."""
+    """One character as JSON escapes it: `\\n`, `\\r`, `\\t`, else `\\u001b`,
+    and one past U+FFFF as its surrogate pair (`\\udb40\\udc67`), so it can't
+    print as a different name."""
+    if ord(c) > 0xFFFF:
+        high, low = divmod(ord(c) - 0x10000, 0x400)
+        return f"\\u{0xD800 + high:04x}\\u{0xDC00 + low:04x}"
     return _NAMED.get(c) or f"\\u{ord(c):04x}"
 
 

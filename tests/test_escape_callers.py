@@ -52,6 +52,24 @@ def test_escape_unprintable_examples(text, shown):
     assert issues_mod.escape_unprintable(text) == shown
 
 
+@pytest.mark.parametrize("text,other,shown", [
+    ("\U000e0067", "\ue006" + "7", "\\udb40\\udc67"),
+    ("a\U000e0080b", "a\ue008" + "0b", "a\\udb40\\udc80b"),
+])
+def test_a_character_past_u_ffff_is_written_as_its_json_surrogate_pair(text, other, shown):
+    """A tag character or a private-use one past U+FFFF is written as JSON
+    escapes it, a surrogate pair, so it can't print as a different name: a
+    character below U+FFFF followed by a hex digit."""
+    assert issues_mod.escape_unprintable(text) == shown
+    assert issues_mod.escape_unprintable(text) != issues_mod.escape_unprintable(other)
+
+
+def test_every_character_past_u_ffff_escaped_is_written_as_json_writes_it():
+    wrong = [hex(cp) for cp in range(0x10000, sys.maxunicode + 1)
+             if not chr(cp).isprintable() and issues_mod.escape_unprintable(chr(cp)) != json.dumps(chr(cp))[1:-1]]
+    assert wrong == []
+
+
 # ---------- the callers keep no list of their own ----------
 
 
@@ -80,6 +98,13 @@ def test_merge_check_text_escapes_a_line_break_and_an_escape_code(project, capsy
     assert "Needs the owner's review" in out, out
     assert "- `.claude/a\\nb\\u001b[31m.md`" in out, out
     assert "\x1b" not in out
+
+
+def test_merge_check_text_tells_apart_a_character_past_u_ffff(project, capsys):
+    data = inputs()
+    data["files"] = [{"filename": ".claude/x\U000e0080", "status": "modified"}, {"filename": ".claude/x\ue008" + "0", "status": "modified"}]
+    out, _ = check(project, capsys, data, as_json=False)
+    assert "- `.claude/x\\udb40\\udc80`" in out and "- `.claude/x\\ue0080`" in out, out
 
 
 @pytest.mark.parametrize("name,shown", [
