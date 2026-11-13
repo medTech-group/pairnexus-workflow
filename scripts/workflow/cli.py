@@ -98,7 +98,7 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, project_root, resolve_experience
+from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, project_root, resolve_experience, unreadable
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -923,12 +923,24 @@ def _charter_estimate(a) -> int:
     return 0
 
 
+def _load(root: Path | None = None, required: bool = True):
+    """`load`, with the `OSError` it still lets through, from asking whether
+    the profile exists (a folder that can't be searched, a path too long),
+    refused in `load`'s words (`profile.unreadable`): the callers here that
+    refuse a profile they can't read catch `ProfileError` alone. Until #837
+    moves that question inside `load`'s error handling."""
+    try:
+        return load(root, required=required)
+    except OSError as e:
+        raise unreadable(e) from None
+
+
 def _page_profile():
     """The profile for the one page's size and review, or None when it can't be
     read: a broken profile never stops the page from rendering."""
     try:
         return load(required=False)
-    except (ValueError, OSError):  # ProfileError is a ValueError; so is a file that isn't UTF-8
+    except (ValueError, OSError):  # ProfileError is a ValueError, and `load` words a file it can't read as one (#829)
         return None
 
 
@@ -973,9 +985,9 @@ def _charter_change_problems(old, new) -> list[str]:
     if not isinstance(c, dict) or charter_mod.validate(c):
         return []
     try:
-        prof = load(required=False)
-    except (UnicodeDecodeError, OSError) as e:
-        raise ProfileError(f"the profile can't be read ({e}), so the charter change can't be checked") from e
+        prof = _load(required=False)
+    except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
+        raise ProfileError(f"{e}, so the charter change can't be checked") from None
     if prof is None:
         print("note: no profile found: the charter change wasn't checked against it", file=sys.stderr)
         return []
@@ -1248,11 +1260,9 @@ def cmd_merge_check(a) -> int:
     inputs = _json_inputs(a, [*merge_mod.INPUTS, *merge_mod.WHEN_NEEDED, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
     prof, profile_error = None, None
     try:
-        prof = load()  # its protected paths and required checks are rules: none found is a reason
-    except ProfileError as e:
+        prof = _load()  # its protected paths and required checks are rules: none found is a reason
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         profile_error = str(e)
-    except (OSError, UnicodeDecodeError) as e:
-        profile_error = f"can't read {PROFILE_PATH}: {getattr(e, 'strerror', None) or e}"
     root = prof.root if prof else project_root()
     charter = inputs.pop("charter", None)
     if a.fetch is not None:
@@ -1358,11 +1368,9 @@ def cmd_preview(a) -> int:
     missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
     if a.fetch is not None and missing:
         try:
-            prof = load(required=False)
-        except ProfileError as e:
+            prof = _load(required=False)
+        except ProfileError as e:  # `load` words a file it can't read (#829)
             prof, why = None, f"the profile can't be read ({e})"
-        except (OSError, UnicodeDecodeError) as e:
-            prof, why = None, f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e})"
         else:
             why = f"there's no profile ({PROFILE_PATH})"
         if prof is None:
@@ -1508,9 +1516,9 @@ def _research_patterns() -> list[str]:
     command prints or writes. No profile: none. A profile that can't be read
     stops the command (exit 1), rather than print text unchecked."""
     try:
-        prof = load(required=False)
-    except (OSError, UnicodeDecodeError) as e:
-        raise ProfileError(f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e}), so [sensitive].patterns can't be left out") from None
+        prof = _load(required=False)
+    except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
+        raise ProfileError(f"{e}, so [sensitive].patterns can't be left out") from None
     return list(prof.sensitive_patterns) if prof else []
 
 
@@ -1915,8 +1923,8 @@ def _own_hashes(a, commit: str) -> own_changes_mod.Hashes:
     the record still counts, and standard output stays the record alone."""
     unknown = f"{own_changes_mod.UNKNOWN} for diff and lines"
     try:
-        prof = load()
-    except (ProfileError, OSError, UnicodeDecodeError) as e:
+        prof = _load()
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         if _given_base(a) is None:
             _record_note(f"couldn't read the profile for the base branch ({e}): {unknown}")
             return own_changes_mod.UNKNOWN_HASHES
@@ -1959,8 +1967,8 @@ def _measure(a) -> int:
         print("workflow review-record: --measure needs --commit, the full 40-character SHA to measure (`git rev-parse HEAD`)", file=sys.stderr)
         return 2
     try:
-        prof = load()
-    except (ProfileError, OSError, UnicodeDecodeError) as e:
+        prof = _load()
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         print(f"workflow review-record: can't measure: couldn't read the profile: {e}", file=sys.stderr)
         return 1
     try:

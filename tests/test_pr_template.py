@@ -312,6 +312,6 @@ def test_install_lists_it_among_what_setup_writes():
 def test_the_changelog_notes_it_under_unreleased():
     text = (KIT / "CHANGELOG.md").read_text(encoding="utf-8")
     unreleased = since_0110(text)
-    entry = unreleased.split("(#83", 1)[1].split("\n\n**", 1)[0]
+    entry = unreleased.split("(#83, ", 1)[1].split("\n\n**", 1)[0]  # #83's own note, not one for #830 to #839
     assert "`workflow pr-template`" in entry
     assert "**For projects updating:**" in entry
