@@ -261,6 +261,19 @@ class FetchUnreadable(SystemExit):
         super().__init__(f"workflow: can't read {gave}: {why} ({FETCH_INSTEAD})")
 
 
+class GhNotRun(SystemExit):
+    """`_fetch`'s refusal when `gh` couldn't be run at all (#857, #809): none
+    on the PATH (`fetch.NOT_INSTALLED`), or one the system won't start (`couldn't
+    run gh: <why>`, as `fetch._run` words it). `said`, ``can't run `gh api
+    repos/<repo>/issues`: <why>``, is there for a caller with its own wording
+    (`state join`); as a SystemExit, the one `workflow:` line the command
+    prints, exit 1."""
+
+    def __init__(self, said: str):
+        self.said = said
+        super().__init__(f"workflow: {said} ({FETCH_INSTEAD})")
+
+
 class TooDeep(ValueError):
     """`_fetch_items` met lists nested deeper than its `deepest`."""
 
@@ -297,7 +310,9 @@ def _fetch(repo: str, what: str) -> list[dict]:
     whole, as a file is, and each page an old `gh` prints or read one at a
     time on its own. A `gh api … failed` line shows the repo through
     `reviews._shown`, as `_gave` does, here and in `fetch.by_page`'s own
-    message, so it stays one line (#792).
+    message, so it stays one line (#792). A `gh` that can't be run (none on
+    the PATH, or one the system won't start) raises `GhNotRun` (#857, #809),
+    in `fetch._run`'s words.
     """
     query = "issues?state=all&per_page=100" if what == "issues" else "pulls?state=open&per_page=100"
     path = f"repos/{repo}/{query}"
@@ -325,7 +340,15 @@ def _fetch(repo: str, what: str) -> list[dict]:
         except TooDeep:
             raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
 
-    p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
+    def gh(*flags: str) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(["gh", "api", *flags, path], capture_output=True, text=True)
+        except OSError as e:  # as `fetch._run` words it
+            why = fetch_mod.NOT_INSTALLED if isinstance(e, FileNotFoundError) else f"couldn't run gh: {e.strerror or e}"
+            noun = "issues" if what == "issues" else "pulls"
+            raise GhNotRun(f"can't run `gh api repos/{reviews_mod._shown(repo, len(repo))}/{noun}`: {why}") from None
+
+    p = gh("--paginate", "--slurp")
     if p.returncode == 0:
         value, why = doctor_mod._parse_json(p.stdout if p.stdout.strip() else "[]")  # no output: no pages
         if why:
@@ -335,7 +358,7 @@ def _fetch(repo: str, what: str) -> list[dict]:
         return items(by_page())
     if "slurp" not in (p.stderr + p.stdout).lower():
         raise failed(p.stderr.strip())
-    p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
+    p = gh("--paginate")
     if fetch_mod.numeric_refused(p, path):
         return items(by_page())
     if p.returncode:
@@ -1102,7 +1125,7 @@ def _state_join(a, body: str) -> int:
         try:
             issues = _fetch(prof.repo, "issues")
         except SystemExit as e:
-            why = f"can't read {e.gave}: {e.why}" if isinstance(e, FetchUnreadable) else str(e.code).splitlines()[0]
+            why = f"can't read {e.gave}: {e.why}" if isinstance(e, FetchUnreadable) else e.said if isinstance(e, GhNotRun) else str(e.code).splitlines()[0]
             raise SystemExit(f"workflow state join: the open issues couldn't be read ({why}); {instead}") from None
         try:
             perms_raw = fetch_mod.permissions_of(prof.repo, state_mod.authors(s, issues))
