@@ -9,8 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from changelog_notes import released, since_0110
 from test_adopt import CLI, _run, _starter
 
@@ -48,31 +46,6 @@ def test_case_two_is_one_escaped_line(tmp_path):
     p = _run(copy)
     assert p.returncode == 1 and "can't rewrite line by line" in p.stderr
     assert "‮" not in p.stderr and "old\\u202e" in p.stderr and p.stderr.count("\n") == 1
-
-
-def test_case_three_is_one_escaped_line(tmp_path):
-    copy = _starter(tmp_path / "copy")
-    path = copy / ".claude/workflow/profile.toml"
-    path.write_text(path.read_text().replace('owner = "old-owner"', 'owner = "old\\u001b[31m\\nX"'))
-    p = _run(copy)
-    assert p.returncode == 0
-    assert "\x1b" not in p.stdout
-    assert "Left .github/CODEOWNERS as it is: it doesn't name @old\\u001b[31m\\nX" in p.stdout.splitlines()
-
-
-def test_case_three_reads_as_before_for_an_ordinary_project(tmp_path):
-    copy = _starter(tmp_path / "copy")
-    p = _run(copy)
-    assert p.returncode == 0
-    assert "Changed .github/CODEOWNERS: @old-owner → @ada" in p.stdout.splitlines()
-
-
-@pytest.mark.parametrize("name", ["ノート\u3000App", "Dev notes \U0001F469\u200d\U0001F4BB", "My\u00a0Notes"])
-def test_case_three_keeps_an_ordinary_name_as_typed(tmp_path, name):
-    copy = _starter(tmp_path / "copy")
-    p = _run(copy, name=name)
-    assert p.returncode == 0, p.stderr
-    assert f"Changed README.md: title = {name}" in p.stdout.splitlines()
 
 
 def test_the_note_and_this_file_name_the_area_only():

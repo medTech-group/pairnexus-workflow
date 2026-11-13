@@ -266,7 +266,6 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
     res.record(PROFILE, text, new_text, ", ".join(keys))
 
     old_owner = old.get("owner") or ""
-    shown = issues_mod.escape_unprintable(old_owner)
     found = next((p for p in CODEOWNERS_PATHS if (root / p).is_file()), None)
     if found is None:
         res.notes.append("Skipped CODEOWNERS: not there")
@@ -276,8 +275,8 @@ def plan(root: Path, owner: str, repo: str, name: str) -> Result:
         text = res.read(root, found)
         new_text = _codeowners(text, old_owner, owner)
         if new_text == text and not _owner(owner).search(text):  # already yours after a failed run: nothing to say
-            res.notes.append(f"Left {found} as it is: it doesn't name @{shown}")
-        res.record(found, text, new_text, f"@{shown} → @{owner}")
+            res.notes.append(f"Left {found} as it is: it doesn't name @{old_owner}")
+        res.record(found, text, new_text, f"@{old_owner} → @{owner}")
 
     text = res.read(root, WRANGLER)
     if text is None:
