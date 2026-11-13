@@ -26,6 +26,12 @@ exit 1. `slurp=False` is a gh too old for `--slurp` (it refuses the flag);
 `signed_in=False` one that isn't signed in (`auth status` and every `api` call
 fail as gh does). Each call's arguments are logged, to read back with
 `calls()` or `paths()`.
+
+Output that isn't UTF-8 (#809, #812): `reply(...)`'s `stdout` and `stderr`,
+and `pages(...)`'s `refusal` (the proxy's words in place of
+`NUMERIC_REFUSED`), may be bytes, written as they are. `reply(...,
+slurp=reply(...))` answers a `--slurp` call with the inner reply, any other
+call with the outer one: an old gh that refuses `--slurp` in its own words.
 """
 
 from __future__ import annotations
@@ -48,16 +54,23 @@ NUMERIC_REFUSED = (
 )
 
 
-def pages(*values, numeric_refused: bool = False) -> dict:
+def _text(v: str | bytes):
+    """Text as it is; bytes as JSON can hold them, for the script to write as
+    they are."""
+    return {"bytes": v.decode("latin-1")} if isinstance(v, bytes) else v
+
+
+def pages(*values, numeric_refused: bool = False, refusal: str | bytes | None = None) -> dict:
     """A paginated answer: each value one page. With `numeric_refused`,
     `--paginate` fails after the first page as the cloud session's proxy
-    makes it (#568)."""
-    return {TAG: "pages", "pages": list(values), "numeric_refused": numeric_refused}
+    makes it (#568), saying `refusal` (`NUMERIC_REFUSED` by default)."""
+    return {TAG: "pages", "pages": list(values), "numeric_refused": numeric_refused, "refusal": None if refusal is None else _text(refusal)}
 
 
-def reply(stdout: str = "", exit: int = 0, stderr: str = "") -> dict:
-    """An answer with its own output and exit code."""
-    return {TAG: "reply", "stdout": stdout, "exit": exit, "stderr": stderr}
+def reply(stdout: str | bytes = "", exit: int = 0, stderr: str | bytes = "", slurp: dict | None = None) -> dict:
+    """An answer with its own output and exit code; `slurp`, another reply,
+    answers a `--slurp` call instead."""
+    return {TAG: "reply", "stdout": _text(stdout), "exit": exit, "stderr": _text(stderr), "slurp": slurp}
 
 
 SCRIPT = r'''#!{python}
@@ -72,8 +85,19 @@ with open(HERE / "calls.jsonl", "a") as log:
     log.write(json.dumps(args) + "\n")
 
 
+def write(stream, v):
+    """Text, or bytes as `_text` holds them, written as they are."""
+    if isinstance(v, dict):
+        stream.flush()
+        stream.buffer.write(v["bytes"].encode("latin-1"))
+        stream.flush()
+    else:
+        stream.write(v)
+
+
 def fail(msg, code=1):
-    sys.stderr.write(msg + "\n")
+    write(sys.stderr, msg)
+    sys.stderr.write("\n")
     sys.exit(code)
 
 
@@ -103,8 +127,10 @@ answer = conf["routes"].get(route)
 if answer is None:
     fail("gh: Not Found (HTTP 404)")
 if isinstance(answer, dict) and answer.get(TAG) == "reply":
-    sys.stdout.write(answer["stdout"])
-    sys.stderr.write(answer["stderr"])
+    if "--slurp" in args and answer.get("slurp"):
+        answer = answer["slurp"]
+    write(sys.stdout, answer["stdout"])
+    write(sys.stderr, answer["stderr"])
     sys.exit(answer["exit"])
 if isinstance(answer, dict) and answer.get(TAG) == "pages":
     if "--paginate" not in args:
@@ -115,7 +141,7 @@ if isinstance(answer, dict) and answer.get(TAG) == "pages":
     elif answer.get("numeric_refused") and len(answer["pages"]) > 1:
         if "--slurp" not in args:
             sys.stdout.write(json.dumps(answer["pages"][0]) + "\n")
-        fail(conf["numeric_refused"])
+        fail(answer.get("refusal") or conf["numeric_refused"])
     elif "--slurp" in args:
         print(json.dumps(answer["pages"]))
     else:

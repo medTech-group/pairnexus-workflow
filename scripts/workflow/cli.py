@@ -250,15 +250,31 @@ FETCH_DEPTH = 8
 FETCH_INSTEAD = "fetch them with the GitHub MCP tools and give --issues and --prs files instead"
 
 
-class FetchUnreadable(SystemExit):
+class FetchRefused(SystemExit):
+    """A `_fetch` refusal in one line: as a SystemExit, the `workflow:` line
+    the command prints, exit 1; `said`, the refusal without `workflow: ` and
+    the advice (`FETCH_INSTEAD`), for a caller with its own wording (`state
+    join`, #809)."""
+
+    def __init__(self, said: str):
+        self.said = said
+        super().__init__(f"workflow: {said} ({FETCH_INSTEAD})")
+
+
+class FetchUnreadable(FetchRefused):
     """`_fetch`'s refusal of output `gh` gave with exit 0 that it can't read
     (#788): `gave`, what it names ("the issues `gh api repos/<repo>/issues`
-    gave"), and `why`, for a caller with its own wording (`state join`); as a
-    SystemExit, the one `workflow:` line the command prints, exit 1."""
+    gave"), and `why`; `said` is `can't read <gave>: <why>`."""
 
     def __init__(self, gave: str, why: str):
         self.gave, self.why = gave, why
-        super().__init__(f"workflow: can't read {gave}: {why} ({FETCH_INSTEAD})")
+        super().__init__(f"can't read {gave}: {why}")
+
+
+class GhNotRun(FetchRefused):
+    """`_fetch`'s refusal when `gh` couldn't be run at all (#809): none on
+    the PATH, or one the system won't start (`fetch.GhError`'s words);
+    `said` is ``can't run `gh api repos/<repo>/issues`: <why>``."""
 
 
 class TooDeep(ValueError):
@@ -270,11 +286,15 @@ class NotAnObject(ValueError):
     list nor an object."""
 
 
+def _gh_call(repo: str, what: str) -> str:
+    """The `gh api` call `_fetch` makes, as its refusals name it: the repo
+    shown escaped (`reviews._shown`), so the line stays one line (#775)."""
+    return f"`gh api repos/{reviews_mod._shown(repo, len(repo))}/{'issues' if what == 'issues' else 'pulls'}`"
+
+
 def _gave(repo: str, what: str) -> str:
-    """What `_fetch` read, as its refusals name it: the repo shown escaped
-    (`reviews._shown`), so the line stays one line (#775)."""
-    shown = reviews_mod._shown(repo, len(repo))
-    return f"the issues `gh api repos/{shown}/issues` gave" if what == "issues" else f"the pull requests `gh api repos/{shown}/pulls` gave"
+    """What `_fetch` read, as its refusals name it (`_gh_call`'s words)."""
+    return f"the {'issues' if what == 'issues' else 'pull requests'} {_gh_call(repo, what)} gave"
 
 
 def _fetch(repo: str, what: str) -> list[dict]:
@@ -297,7 +317,12 @@ def _fetch(repo: str, what: str) -> list[dict]:
     whole, as a file is, and each page an old `gh` prints or read one at a
     time on its own. A `gh api … failed` line shows the repo through
     `reviews._shown`, as `_gave` does, here and in `fetch.by_page`'s own
-    message, so it stays one line (#792).
+    message, so it stays one line (#792). `gh` runs through
+    `fetch.run_exact`: a `gh` that can't be run raises `GhNotRun` (#809),
+    and standard output that isn't UTF-8, on the `--slurp` route and an old
+    `gh`'s, raises `FetchUnreadable`, `it isn't UTF-8 text`; standard error
+    is read with U+FFFD in place of such bytes (#812). The page-by-page
+    route reads its pages through `fetch._run` (#810's).
     """
     query = "issues?state=all&per_page=100" if what == "issues" else "pulls?state=open&per_page=100"
     path = f"repos/{repo}/{query}"
@@ -325,7 +350,17 @@ def _fetch(repo: str, what: str) -> list[dict]:
         except TooDeep:
             raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
 
-    p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
+    def gh(*flags: str):
+        """`gh api <flags> <path>`; its standard output, with exit 0, is UTF-8 text."""
+        try:
+            p = fetch_mod.run_exact(["api", *flags, path])
+        except fetch_mod.GhError as e:
+            raise GhNotRun(f"can't run {_gh_call(repo, what)}: {e}") from None
+        if p.returncode == 0 and not fetch_mod.is_utf8(p.stdout):
+            raise FetchUnreadable(_gave(repo, what), "it isn't UTF-8 text")
+        return p
+
+    p = gh("--paginate", "--slurp")
     if p.returncode == 0:
         value, why = doctor_mod._parse_json(p.stdout if p.stdout.strip() else "[]")  # no output: no pages
         if why:
@@ -335,7 +370,7 @@ def _fetch(repo: str, what: str) -> list[dict]:
         return items(by_page())
     if "slurp" not in (p.stderr + p.stdout).lower():
         raise failed(p.stderr.strip())
-    p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
+    p = gh("--paginate")
     if fetch_mod.numeric_refused(p, path):
         return items(by_page())
     if p.returncode:
@@ -1090,7 +1125,7 @@ def _state_join(a, body: str) -> int:
         try:
             issues = _fetch(prof.repo, "issues")
         except SystemExit as e:
-            why = f"can't read {e.gave}: {e.why}" if isinstance(e, FetchUnreadable) else str(e.code).splitlines()[0]
+            why = e.said if isinstance(e, FetchRefused) else str(e.code).splitlines()[0]
             raise SystemExit(f"workflow state join: the open issues couldn't be read ({why}); {instead}") from None
         try:
             perms_raw = fetch_mod.permissions_of(prof.repo, state_mod.authors(s, issues))

@@ -70,15 +70,44 @@ def available() -> bool:
     return shutil.which("gh") is not None
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess:
+def _start(args: list[str], errors: str, timeout: float | None) -> subprocess.CompletedProcess:
+    """`gh <args>`, its output decoded as UTF-8 with `errors`; a gh that
+    can't be run (none on the PATH, one the system won't start, or one past
+    `timeout`) raises `GhError`, in one line."""
     try:
-        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT)
+        return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", errors=errors, timeout=timeout)
     except FileNotFoundError:
         raise GhError(NOT_INSTALLED) from None
     except subprocess.TimeoutExpired:
         raise GhError(TIMED_OUT) from None
     except OSError as e:
         raise GhError(f"couldn't run gh: {e.strerror or e}") from None
+
+
+def _run(args: list[str]) -> subprocess.CompletedProcess:
+    return _start(args, "replace", TIMEOUT)
+
+
+def run_exact(args: list[str]) -> subprocess.CompletedProcess:
+    """`gh <args>` as `_run` runs it, for a caller that refuses output that
+    isn't UTF-8 rather than read it with U+FFFD in its place (`cli._fetch`,
+    #809, #812): standard output keeps each byte that isn't UTF-8 as a lone
+    surrogate (`surrogateescape`), which `is_utf8` finds; standard error has
+    U+FFFD in their place, as `_run` gives it. No time limit, as `_fetch` had
+    none: `--paginate` reads every page in one call."""
+    p = _start(args, "surrogateescape", None)
+    p.stderr = (p.stderr or "").encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+    return p
+
+
+def is_utf8(text: str) -> bool:
+    """`run_exact`'s standard output was UTF-8 text: it holds no byte kept
+    as a lone surrogate."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _failed(p: subprocess.CompletedProcess) -> GhError:
