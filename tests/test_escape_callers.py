@@ -254,6 +254,23 @@ def test_merge_check_json_queue_note_escapes_a_ruleset_name(project, capsys):
     assert 'ruleset "q\\u202eq" includes' in note and "\u202e" not in note, note
 
 
+@pytest.mark.parametrize("run, shown", [
+    ({"name": "a\u202eb", "status": "completed", "app": {"slug": "github-actions"}},
+     'the completed check run "a\\u202eb" has no conclusion'),
+    ({"name": "a", "status": "completed", "conclusion": "success", "started_at": "x\u202e", "app": {"slug": "github-actions"}},
+     '"x\\u202e" isn\'t a time'),
+])
+def test_preview_checks_error_escapes_workflow_protections_words(tmp_path, capsys, run, shown):
+    """`workflow preview` reads its `--checks` through `workflow protection`,
+    so the words it quotes in its error message pass through
+    `protection.printable`: a check run's name, or a time it can't read."""
+    from test_preview import checks, preview
+
+    out, code, err = preview(tmp_path, capsys, [], checks(run), "abc1234", as_json=False)
+    assert code == 1 and f"workflow preview: couldn't read --checks: {shown}" in err, err
+    assert "\u202e" not in err, err
+
+
 # ---------- the architecture page ----------
 
 
@@ -292,11 +309,13 @@ def test_the_changelog_note_names_workflow_graphs_text():
 
 def test_the_changelog_note_names_where_workflow_protections_pass_reaches():
     """`protection.printable` reaches `workflow protection`'s `--json` and
-    error messages, doctor's GitHub lines (text and `--json`) and
-    merge-check's `--json` queue note, not its text alone."""
+    error messages, `workflow preview`'s `--checks` error messages, doctor's
+    GitHub lines (text and `--json`) and merge-check's `--json` queue note,
+    not its text alone."""
     note = entry("#805, found in the review of #776's pull request")
     assert "text only" not in note
     item = next(l for l in note.splitlines() if l.startswith("- **Changed in `workflow protection`'s"))
     for words in ("`workflow protection --json`'s `missing`", "error messages", "doctor's GitHub lines",
-                  "its `--json` `message`", "merge-check's whole text", "`notes[].message`"):
+                  "its `--json` `message`", "merge-check's whole text", "`notes[].message`",
+                  "`workflow preview`'s error messages on the check runs it reads (`couldn't read --checks: ...`)"):
         assert words in item, words
