@@ -57,12 +57,12 @@ def shape(tmp_path):
 
     def make(branch, folder=PROFILE.parent, mode=0, **project):
         root = _project(tmp_path, branch, **project)
-        os.chmod(root / folder, mode)
-        made.append(root / folder)
+        made.append((root / folder).resolve())
+        os.chmod(made[-1], mode)
         return root
 
     yield make
-    for folder in made:
+    for folder in reversed(made):
         os.chmod(folder, 0o755)
 
 
