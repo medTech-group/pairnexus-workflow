@@ -273,33 +273,28 @@ def _shown(value: str, most: int = 40) -> str:
     return v if len(v) <= most else v[:most] + "…"
 
 
+def _at(root: Path, rel: str | Path) -> Path:
+    """A path in the checkout (`rel` from its root, or absolute)."""
+    return Path(rel) if Path(rel).is_absolute() else root / rel
+
+
 def _file(root: Path, rel: str | Path) -> tuple[Path, str | None]:
     """A path in the checkout, and why it can't be read as a regular file
-    (None when it can, or is missing). A pipe or a directory is never opened."""
-    path = Path(rel) if Path(rel).is_absolute() else root / rel
-    try:
-        if path.exists() and not path.is_file():
-            return path, "it isn't a file"
-    except OSError as e:
-        return path, f"it can't be read ({type(e).__name__})"
-    return path, None
+    (None when it can, or is missing), in `profile.file_problem`'s words. A
+    pipe or a directory is never opened."""
+    path = _at(root, rel)
+    why = profile_mod.file_problem(path)
+    return path, why and f"it {why}"
 
 
 def _read_text(root: Path, rel: str | Path) -> tuple[str | None, str | None]:
     """A text file's contents (a byte-order mark left out), and why it can't
-    be read: (None, None) when it is missing. Never raises, and never blocks
-    on a pipe."""
-    path, err = _file(root, rel)
-    if err:
-        return None, err
-    try:
-        if not path.exists():
-            return None, None
-        return path.read_text(encoding="utf-8").removeprefix("\ufeff"), None
-    except UnicodeDecodeError:
-        return None, "it isn't UTF-8 text"
-    except (OSError, ValueError) as e:
-        return None, f"it can't be read ({type(e).__name__})"
+    be read, in `profile.read_file`'s words: (None, None) when it is missing.
+    Never raises, and never blocks on a pipe."""
+    text, why = profile_mod.read_file(_at(root, rel))
+    if why:
+        return None, f"it {why}"
+    return (None if text is None else text.removeprefix("\ufeff")), None
 
 
 def _parse_json(text: str, loads=json.loads):
@@ -1377,7 +1372,7 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
         n = round(timeout)
         return _Answer(why=Words(f"GitHub didn't answer within {n} second{'' if n == 1 else 's'}{budget}", f"`gh api {shown}` timed out after {timeout:.0f} s{budget}"), fix=again)
     if ran.state != "ok":
-        said = err if ran.state == "failed" else "its answer isn't UTF-8 text"
+        said = err if ran.state == "failed" else f"its answer {profile_mod.NOT_UTF8}"
         return _Answer(why=Words(f"GitHub answered `gh` with an error: {said}", f"`gh api {shown}` failed: {said}"), fix=again)
     try:
         values = posts_mod.decode_values(ran.out)
@@ -1454,9 +1449,9 @@ def _stdin(what: str = "GitHub's answer"):
         if not text.strip():
             return None, "standard input was empty"
     except UnicodeDecodeError:
-        return None, "it isn't UTF-8 text"
+        return None, f"it {profile_mod.NOT_UTF8}"
     except (OSError, ValueError, AttributeError) as e:
-        return None, f"standard input can't be read ({type(e).__name__})"
+        return None, f"standard input {profile_mod.cant_be_read(e)}"
     return _parse_json(text, protection_mod.loads)
 
 
