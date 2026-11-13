@@ -181,6 +181,8 @@ def test_a_project_in_a_folder_of_its_checkout_watches_the_whole_checkout(tmp_pa
     git(mono, "init", "-q", "-b", "main")
     git(mono, "config", "user.email", "t@e")
     git(mono, "config", "user.name", "t")
+    git(mono, "config", "maintenance.auto", "false")  # as `_repo` does
+    git(mono, "config", "gc.auto", "0")
     git(mono, "add", ".")
     git(mono, "commit", "-qm", "x")
     sha = _sha(root)
