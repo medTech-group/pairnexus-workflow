@@ -130,6 +130,21 @@ def test_each_refusal_of_a_second_standard_input_words_it_through_the_helper(mon
     assert told == ["taken permissions prs"]
 
 
+# ---------- the architecture page ----------
+
+
+def test_the_page_states_the_one_read_only_for_the_commands_it_names():
+    """`graph cites` (#827) and `doctor` read standard input once for each
+    flag given `-`, so the page claims no rule for every command: it names
+    `status`, `ready`, `_json_inputs` and `ready`'s `--permissions` only."""
+    page = (Path(__file__).resolve().parents[1] / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    line = next(l for l in page.splitlines() if l.startswith("- `_stdin_taken_line`: in `cli.py`"))
+    assert "A command never reads standard input twice" not in line
+    assert "`status` and `ready` refuse `--issues -` with `--prs -` before reading either" in line
+    assert "`_json_inputs` gives the second `-` its reason without reading it" in line
+    assert "`ready`'s `--permissions -` gets its note" in line
+
+
 # ---------- the changelog note ----------
 
 
