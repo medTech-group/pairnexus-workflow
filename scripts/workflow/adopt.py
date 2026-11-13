@@ -25,6 +25,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import issues as issues_mod
 from .profile import _FENCE, PROFILE_PATH, ProfileError, parse
 
 # Where GitHub looks for CODEOWNERS, in its order: it reads the first it finds.
@@ -48,7 +49,13 @@ BOM = "\ufeff"
 
 
 class AdoptError(ValueError):
-    pass
+    """A refusal, in words. Its message can quote the project's own text, so
+    it is held through `issues.escape_unprintable`, as `ProfileError`'s is,
+    and the `workflow adopt:` line prints as one plain line. Escaping again
+    changes nothing (#862)."""
+
+    def __init__(self, message: object = "") -> None:
+        super().__init__(issues_mod.escape_unprintable(str(message)))
 
 
 @dataclass
