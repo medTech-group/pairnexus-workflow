@@ -70,15 +70,20 @@ def available() -> bool:
     return shutil.which("gh") is not None
 
 
+def not_run(e: OSError) -> str:
+    """Why `gh` couldn't be started, from the `OSError` starting it raised:
+    `NOT_INSTALLED` when there is none on the PATH, else `couldn't run gh:
+    <why>`. `_run` and `cli._fetch` both word it through this."""
+    return NOT_INSTALLED if isinstance(e, FileNotFoundError) else f"couldn't run gh: {e.strerror or e}"
+
+
 def _run(args: list[str]) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT)
-    except FileNotFoundError:
-        raise GhError(NOT_INSTALLED) from None
     except subprocess.TimeoutExpired:
         raise GhError(TIMED_OUT) from None
     except OSError as e:
-        raise GhError(f"couldn't run gh: {e.strerror or e}") from None
+        raise GhError(not_run(e)) from None
 
 
 def _failed(p: subprocess.CompletedProcess) -> GhError:
