@@ -99,8 +99,12 @@ NO_PYTHON_REASON = (
     "a broken checkout), so nothing can be checked; check python3 --version (3.11 or newer is needed) and "
     "python3 .claude/workflow/bin/workflow.py profile check, then start a new session"
 )
-# Both go into single-quoted sh strings.
-assert "'" not in NO_PYTHON_REASON + MISSING_KIT_REASON
+UNREADABLE_KIT_REASON = (
+    "the workflow kit is in this checkout but cannot be read, so nothing can be checked; make .claude/workflow "
+    "readable again, then start a new session"
+)
+# All three go into single-quoted sh strings.
+assert "'" not in NO_PYTHON_REASON + MISSING_KIT_REASON + UNREADABLE_KIT_REASON
 
 # WORKFLOW_ROLE, trimmed and lower-cased as roles.env_role reads it.
 _ROLE = (
@@ -130,6 +134,18 @@ _BRANCH = (
 _PLANNING = (
     'if [ -n "$W" ] && [ -f "${F%.py}/fallback.sh" ] && [ "$(sh "${F%.py}/fallback.sh" --ticket-rule </dev/null)" = ticket ]; '
     'then R=attended; fi; '
+)
+# The CLI not found because a folder on its path is there but can't be read is
+# not a missing kit (#872): U says so, and the hook then refuses every tool to
+# a ticket or conductor session (with WORKFLOW_ROLE unset, a branch matching
+# the default run.ticket_branch, since the profile can't be read either) and
+# asks about every tool otherwise.
+_UNREADABLE = (
+    'U=; if [ ! -f "$F" ]; then for S in "" /workflow /workflow/bin; do '
+    'if [ -d "$CLAUDE_PROJECT_DIR/.claude$S" ] && [ ! -x "$CLAUDE_PROJECT_DIR/.claude$S" ]; then U=1; fi; done; fi; '
+    'if [ -n "$U" ] && [ -z "$R" ]; then '
+    'B=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null); '
+    'case "$B" in HEAD|"") ;; claude/build-*) R=ticket;; esac; fi; '
 )
 
 
@@ -178,7 +194,11 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     that is a ticket session only by its branch, or by a WORKFLOW_ROLE that
     isn't a role, gets that fallback too, as a planning session. An
     attended session's guard always exits 0. SessionStart says so to everyone
-    (#22). The CLI itself exits 0 whenever it has decided, so a non-zero exit
+    (#22).
+    With the kit there but unreadable, so that the CLI isn't found (#872), the
+    guard refuses every tool to a ticket or conductor session (with
+    WORKFLOW_ROLE unset, a branch matching the default run.ticket_branch) and
+    asks about every tool otherwise; it never reads as a missing kit. The CLI itself exits 0 whenever it has decided, so a non-zero exit
     means it couldn't.
 
     The plugin is for attended work only: without a working python3 its guard
@@ -216,11 +236,14 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     if plugin:
         return run + fallback
 
-    def deny(reason: str) -> str:
+    def decide(decision: str, reason: str) -> str:
         return json.dumps(
-            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}},
+            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}},
             separators=(",", ":"),
         )
+
+    def deny(reason: str) -> str:
+        return decide("deny", reason)
 
     restore = (
         "import json,sys;e=json.load(sys.stdin);i=e.get('tool_input') or {};"
@@ -231,6 +254,10 @@ def hook_command(sub: str, plugin: bool = False) -> str:
         run
         + _ROLE
         + _MISTYPED
+        + _UNREADABLE
+        + 'if [ -n "$U" ]; then if [ -z "$R" ] || [ "$R" = attended ]; then '
+        + f"printf '%s\\n' '{decide('ask', UNREADABLE_KIT_REASON + '.')}'; "
+        + f"else printf '%s\\n' '{decide('deny', 'Refused: ' + UNREADABLE_KIT_REASON + '.')}'; fi; exit 0; fi; "
         + 'if [ -f "$F" ]; then ' + _BRANCH + _PLANNING + 'fi; '
         + 'if [ -z "$R" ] || [ "$R" = attended ]; then ' + fallback + '; fi; '
         + f"if [ -f \"$F\" ]; then printf '%s\\n' '{deny('Refused: ' + NO_PYTHON_REASON + '.')}'; exit 0; fi; "
