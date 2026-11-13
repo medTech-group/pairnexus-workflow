@@ -88,10 +88,11 @@ def quote(s: str) -> str:
 
 
 def printable(dumped: str) -> str:
-    """JSON text with the characters that could start a line, or can't be
-    printed, escaped as JSON escapes them."""
-    out = dumped.replace("\x85", "\\u0085").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    # A lone surrogate can't be printed; escape it as JSON does.
+    """JSON text with the characters that could start a line, reach the
+    terminal as a code, or can't be printed, escaped as JSON escapes them:
+    `issues.escape_controls` on each of its lines (so an indented dump keeps
+    them), then `issues.escape_surrogates` (#805)."""
+    out = "\n".join(issues_mod.escape_controls(line) for line in dumped.split("\n"))
     return issues_mod.escape_surrogates(out)
 
 
