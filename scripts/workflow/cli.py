@@ -601,13 +601,9 @@ def _read_profile(root: Path):
     """(the profile, None), or (None, `profile check`'s error) for one that
     can't be used, as doctor reads it; (None, None) with no profile."""
     try:
-        if (root / PROFILE_PATH).exists() and not (root / PROFILE_PATH).is_file():
-            raise ProfileError(f"{PROFILE_PATH} isn't a file")  # a directory, or a pipe that would block the read
-        return load(root, required=False), None
+        return load(root, required=False), None  # `load` words a file it can't read (#829)
     except ProfileError as e:
         return None, str(e)
-    except UnicodeDecodeError:
-        return None, f"{PROFILE_PATH} isn't UTF-8 text"
     except (OSError, ValueError) as e:
         return None, f"{PROFILE_PATH} can't be read ({type(e).__name__})"
 

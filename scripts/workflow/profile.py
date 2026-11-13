@@ -649,8 +649,18 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
         if required:
             raise ProfileError(f"no profile at {path}; run the setup-workflow skill first")
         return None
+    # Each refusal names the profile by its path in the project, never the
+    # absolute one, as `workflow status` and `workflow doctor` say it (#829).
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        if not path.is_file():  # a directory, or a pipe that would block the read
+            raise ProfileError(f"{PROFILE_PATH} isn't a file")
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise ProfileError(f"{PROFILE_PATH} isn't UTF-8 text") from None
+    except OSError as e:
+        raise ProfileError(f"{PROFILE_PATH} can't be read ({type(e).__name__})") from None
+    try:
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
         raise ProfileError(f"{path}: {e}") from e
     return parse(data, root)

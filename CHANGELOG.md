@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**A profile that isn't UTF-8, or isn't a file, is refused in one line** (#829, found in the review of #821's pull request; the unreadable-file part of #319). `profile.load` let `UnicodeDecodeError` and `OSError` through, so a `.claude/workflow/profile.toml` holding a byte that isn't UTF-8, or one that is a directory, ended `workflow profile check`, `workflow ready --fetch` and `workflow state join --fetch` in a traceback, with the profile's absolute path in it.
+
+- **Refused now:** `profile.load` gives `.claude/workflow/profile.toml isn't UTF-8 text`, `.claude/workflow/profile.toml isn't a file` (a directory, or a pipe that would block the read), or `.claude/workflow/profile.toml can't be read (<error>)` for any other file it can't open, the wording `workflow status` and `workflow doctor` already gave. So every command that reads the profile prints one `workflow: …` line and exits 1, and `merge-check`, `preview --fetch` and the guard name the profile's mistake in those words.
+- **Unchanged:** `workflow status` and `workflow doctor` keep their lines, now from `profile.load` rather than their own copy in `cli._read_profile`. A profile that isn't valid TOML is refused as before.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_unreadable.py`.
+
 **One shared test for control characters** (#823, found in the review of #821's pull request). The profile's `project.repo` check kept its own copy of Unicode's Cc set (`profile.CONTROL`), beside the copies in `issues.py`, `research.py` and `protection.py`.
 
 - **Shared now:** `issues.has_control` is the kit's one test of the Cc set (U+0000 to U+001F, U+007F to U+009F). The profile's `project.repo` check calls it, and `issues.escape_controls` builds its set from the same one, adding the separators and the bidirectional characters as before. `profile.CONTROL` is gone.
