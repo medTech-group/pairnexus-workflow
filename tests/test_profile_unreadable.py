@@ -153,9 +153,10 @@ def _note():
     return notes[start:notes.index("\n\n**", start)]
 
 
-def _page_line():
+def _page_line(name="load"):
+    """The architecture page's line for `name` (`load`'s by default)."""
     page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
-    return next(line for line in page.splitlines() if line.startswith("- `load`:"))
+    return next(line for line in page.splitlines() if line.startswith(f"- `{name}`:"))
 
 
 @pytest.mark.parametrize("text", [_note, _page_line], ids=["changelog", "page"])

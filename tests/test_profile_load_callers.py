@@ -21,7 +21,7 @@ import pytest
 
 import fake_gh
 from changelog_notes import since_0110
-from test_profile_unreadable import NOT_UTF8, _not_utf8
+from test_profile_unreadable import NOT_UTF8, _not_utf8, _page_line
 from workflow import charter, cli, state
 from workflow.profile import PROFILE_PATH
 
@@ -198,11 +198,6 @@ THROUGH_LOAD = {
     "_measure": "`review-record`",
     "_read_profile": "`cli._read_profile` (`status`, `doctor`)",
 }
-
-
-def _page_line(name):
-    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
-    return next(line for line in page.splitlines() if line.startswith(f"- `{name}`:"))
 
 
 def test_the_page_names_the_callers_that_read_it_through_the_wrapper():
