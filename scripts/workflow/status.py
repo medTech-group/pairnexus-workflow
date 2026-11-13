@@ -173,13 +173,6 @@ def _children(i: dict) -> tuple[int, int] | None:
     return total, max(0, total - (subs.get("completed") or 0))
 
 
-def _parent(i: dict) -> bool:
-    """Whether the issue has sub-issues: a `total` above 0, as
-    `issues.is_build_ticket` reads it (#799)."""
-    kids = _children(i)
-    return kids is not None and kids[0] > 0
-
-
 def owner_tasks_holding(issue: dict, by_num: dict[int, dict], repo: str | None = None) -> list[int]:
     """The open owner tasks among the issue's blockers, in the order its
     `## Blocked by` names them. A blocker missing from `by_num`, closed, in
@@ -226,7 +219,7 @@ def snapshot(
     open_issues = ((i, c) for i, c in zip(issues, counted) if "pull_request" not in i and _open(i))
     for i, c in sorted(open_issues, key=lambda p: p[0]["number"]):
         n, title, labels, body = i["number"], i.get("title") or "", lab(i), i.get("body") or ""
-        kids = _children(i)
+        kids, counted_kids = _children(i), _children(c)
         if "workflow:run" in labels:
             st.run.append(Item(n, title))
             continue
@@ -243,7 +236,7 @@ def snapshot(
         is_spec = issues_mod.is_spec(i)
         path = item_path(body)
         # The item's own section, then held over it (#514), unless it already waits on a person (#577).
-        if is_spec or _parent(c):
+        if is_spec or (counted_kids and counted_kids[0]):
             kind = "" if is_spec else "parent issue, "
             if kids is None:
                 detail = "tickets unknown (no sub_issues_summary)"
