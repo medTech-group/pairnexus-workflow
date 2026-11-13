@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A security problem in terminal output** (#856, found in the review of #824's pull request). Fixed; its details were given to the owner.
+
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_warnings_shown.py`.
+
 **A security problem in the guard is fixed** (#859, found in the review of #833's pull request). Its details stay with the owner.
 
 - **Unchanged:** an ordinary profile reads as before.
