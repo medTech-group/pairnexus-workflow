@@ -1,14 +1,13 @@
-"""A security problem in the guard (#833): the guard reads the profile only as a regular file.
+"""#833: the guard's read of the profile without the kit.
 
 Where the kit can't read the profile, the guard still reads two plain lines
 of it as text: `run.ticket_branch` (`_old_python._ticket_branch`, which the CLI
-uses too) and `ruleset` (`fallback._profile_text`). Something at the profile's
-path that isn't a regular file reads as a profile that can't be read. An
-ordinary profile, or a symlink to one, reads as before.
+uses too) and `ruleset` (`fallback._profile_text`). An ordinary profile reads
+as before.
 
 Seams: `workflow hook guard` through the entry point on this Python (the kit's
-path) and through the old-Python fallback's own entry, each in a subprocess
-with a timeout; and the two readers in-process."""
+path) and through the old-Python fallback's own entry, each in a subprocess;
+and the two readers in-process."""
 
 import json
 import os
@@ -77,7 +76,7 @@ PATHS = ["kit", "old-python"]
 
 
 def _guard(path, root, event, role=None):
-    """The hook's (exit code, decision or None, reason), run with a timeout."""
+    """The hook's (exit code, decision or None, reason)."""
     env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", str(root)), "CLAUDE_PROJECT_DIR": str(root)}
     if role:
         env["WORKFLOW_ROLE"] = role
@@ -107,9 +106,8 @@ def test_off_a_ticket_branch_a_push_is_asked(tmp_path, path, make):
 @pytest.mark.parametrize("path", PATHS)
 @pytest.mark.parametrize("make", MAKES)
 def test_on_a_ticket_branch_every_tool_is_refused(tmp_path, path, make):
-    """Something is at the profile's path but it isn't a regular file: the
-    kit is set up, so the default `run.ticket_branch` decides, as for an
-    invalid profile."""
+    """The kit is set up, so the default `run.ticket_branch` decides, as for
+    an invalid profile."""
     root = _project(tmp_path, "claude/build-1")
     make(root, tmp_path)
     for event in (LS, PUSH):
@@ -156,7 +154,7 @@ def test_an_ordinary_profile_still_decides_as_before(tmp_path, path):
     assert (code, decision) == (0, "deny")
 
 
-# ---------- the readers, on regular files ----------
+# ---------- the readers ----------
 
 
 def _write(root, text):
@@ -180,7 +178,7 @@ def test_the_ruleset_line_reads_as_before(tmp_path):
     assert fallback.solo(tmp_path / "nowhere") is False
 
 
-def test_a_symlink_to_a_regular_profile_reads_as_before(tmp_path):
+def test_a_symlink_to_a_profile_reads_as_before(tmp_path):
     real = tmp_path / "real.toml"
     real.write_text('ruleset = false\n[run]\nticket_branch = "work/t-*"\n', encoding="utf-8")
     (tmp_path / PROFILE).parent.mkdir(parents=True)
