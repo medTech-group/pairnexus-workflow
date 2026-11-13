@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow ready` and `workflow status` say standard input is already `--issues`'s when `--prs` is `-` too** (#794, found in the review of #779's pull request). With `--issues -` and `--prs -` both, `--issues` read standard input whole and `--prs` found nothing left, so `workflow ready --issues - --prs - < issues.json` (and `workflow status` the same way) printed `` workflow: can't read standard input (-): it is empty ``, exit 1, though it wasn't empty.
+
+- **Refused in one line now,** before either is read, on standard error, nothing on standard output, exit 1, with or without `--json`: `` workflow ready: --prs: standard input (-) is already --issues's: only one file can be read from it `` (`workflow status:` for `status`), the words `ready` gives `--permissions` on standard input `--prs` already read. One helper, `cli._stdin_taken_line`, gives both commands the line.
+- **Unchanged:** a single `-`, for `--issues` or for `--prs`, still reads standard input; `--fetch` reads no file.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_issues_prs_one_stdin.py`.
+
 **`workflow status --fetch` shows the repo escaped when `gh api` fails** (#792, found in the review of #775's pull request). When `gh api` failed, `workflow status --fetch` (and `workflow ready --fetch` and `workflow state join --fetch`, which read through the same fetch) printed the profile's `project.repo` raw in its `gh api repos/<repo>/issues?… failed: …` line, so `repo = "acme/de\nmo"` split the line in two, and a backtick or U+202E in the name printed as it is, while #775's refusal of the same command showed it escaped.
 
 - **Escaped now,** through `reviews._shown`, as #775's refusal shows it: `` gh api repos/acme/de\nmo/issues?state=all&per_page=100 failed: gh: Not Found (HTTP 404) ``, on one line, a backtick as `` \` `` and U+202E as `\u202e`. It holds for `--slurp`'s failure, an old `gh`'s and the page-by-page fallback's (#568), where the repo in `fetch.by_page`'s own message (`gh api repos/<repo>/issues has more than … pages`) is shown escaped too.

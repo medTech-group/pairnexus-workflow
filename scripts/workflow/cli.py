@@ -176,6 +176,16 @@ def _issues_file(path: str, what: str) -> list[dict]:
     return _fetch_items(value)
 
 
+def _stdin_taken_line(cmd: str, issues_path: str, prs_path: str) -> str | None:
+    """The one line `workflow <cmd>` refuses `--issues -` and `--prs -` with
+    (#794), or None: standard input can be read once, so `--issues`'s read
+    left `--prs` nothing and `_read` said "it is empty". Checked before
+    either is read, in the words `ready` gives `--permissions` (#757)."""
+    if issues_path == "-" and prs_path == "-":
+        return f"workflow {cmd}: --prs: standard input (-) is already --issues's: only one file can be read from it"
+    return None
+
+
 def _not_a_list(value, what: str, deepest: int | None = None, each=None) -> str | None:
     """Why `value`, JSON as read, isn't a list of `what` ("issues" or "pull
     requests"), or None: the reason `_issues_file` gives a file (#757) and
@@ -407,6 +417,10 @@ def cmd_ready(a) -> int:
     else:
         if not a.issues or not a.prs:
             raise SystemExit("give --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
+        refused = _stdin_taken_line("ready", a.issues, a.prs)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
         issues, prs = _issues_file(a.issues, "issues"), _issues_file(a.prs, "pull requests")  # as `status` reads them (#779)
     # Each field of the wrong type left out, as `status` reads it (#780); a
     # summary's count of the wrong type alone, so a parent stays a parent.
@@ -531,6 +545,10 @@ def _status(a) -> int:
     elif a.issues or a.prs:
         if not a.issues or not a.prs:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
+        refused = _stdin_taken_line("status", a.issues, a.prs)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
         issues, prs = _issues_file(a.issues, "issues"), _issues_file(a.prs, "pull requests")
     experience = resolve_experience(root, prof.experience if prof else None)
     local = doctor_mod.report(
