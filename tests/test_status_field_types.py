@@ -176,6 +176,18 @@ def test_the_architecture_line_says_a_summary_with_a_bad_count_is_left_out_whole
     assert "a sub-issue or dependency summary whose count isn't a whole number, left out whole" in line
 
 
+def test_the_799_notes_claim_parity_only_on_parents():
+    """`status` leaves out carried-on tickets that `ready` lists, so #799's
+    lines say only that a parent is ready in neither, as `ready` reads it."""
+    page = (Path(__file__).resolve().parents[1] / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    line = next(l for l in page.splitlines() if l.startswith("- `as_read`:"))
+    note = entry("#799, found in the review of #780's pull request")
+    assert "list the same ready tickets" not in line
+    assert "hold the same numbers" not in note
+    for text in (line, note):
+        assert "so a parent is never a ready ticket in either, as `ready` reads it" in text
+
+
 PR_CASES = [
     # The ticket's own cases.
     (("head",), "main", ("head",)),
@@ -212,3 +224,97 @@ def test_well_typed_fields_are_read_as_before(monkeypatch, capsys, tmp_path):
     assert [(i["number"], i["detail"]) for i in st["ready"]] == [(1, "notes")]
     assert [(i["number"], i["detail"]) for i in st["specs"]] == [(3, "2 of 3 tickets open")]
     assert [(p["number"], p["detail"]) for p in st["prs"]] == [(30, "claude/build-12")]
+
+
+# #799: a parent whose `completed` count has the wrong type is still a parent.
+PARENT = {
+    "number": 1,
+    "title": "Parent",
+    "state": "open",
+    "labels": [{"name": "ready-for-agent"}],
+    "body": "Area: a\n",
+    "sub_issues_summary": {"total": 3, "completed": "1"},
+}
+BAD_COMPLETED = ["1", 1.5, True, [1]]
+
+
+def _ready_json(monkeypatch, capsys, tmp_path, issues, prs):
+    _env(monkeypatch, tmp_path)
+    (tmp_path / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
+    (tmp_path / "prs.json").write_text(json.dumps(prs), encoding="utf-8")
+    code = cli.main(["ready", "--issues", "issues.json", "--prs", "prs.json", "--json"])
+    out = capsys.readouterr()
+    assert "Traceback" not in out.err
+    assert code == 0, out.err
+    return json.loads(out.out)
+
+
+def _ready_section(text: str) -> list[str]:
+    lines = text.splitlines()
+    start = next((k for k, l in enumerate(lines) if l.startswith("Ready build tickets")), None)
+    if start is None:
+        return []
+    section = []
+    for l in lines[start + 1 :]:
+        if not l.startswith("- "):
+            break
+        section.append(l)
+    return section
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_a_parent_whose_completed_count_has_the_wrong_type_is_never_ready(monkeypatch, capsys, tmp_path, completed):
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    got = _json(monkeypatch, capsys, tmp_path, [parent], [])
+    assert 1 not in [i["number"] for i in got["ready"]]
+    text = _status(monkeypatch, capsys, tmp_path, [parent], [])
+    assert not [l for l in _ready_section(text) if l.startswith("- #1 ")]
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_such_a_parent_is_listed_as_a_parent_whose_tickets_are_unknown(monkeypatch, capsys, tmp_path, completed):
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    got = _json(monkeypatch, capsys, tmp_path, [parent], [])
+    assert [(i["number"], i["detail"]) for i in got["specs"]] == [(1, "parent issue, tickets unknown (no sub_issues_summary)")]
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_a_spec_with_such_a_summary_still_reads_tickets_unknown(monkeypatch, capsys, tmp_path, completed):
+    spec = _set(SPEC, ("sub_issues_summary", "completed"), completed)
+    got = _json(monkeypatch, capsys, tmp_path, [spec], [])
+    assert [(i["number"], i["detail"]) for i in got["specs"]] == [(3, "tickets unknown (no sub_issues_summary)")]
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_status_and_ready_agree_on_such_a_parent(monkeypatch, capsys, tmp_path, completed):
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    # A ready ticket beside it, so the agreement isn't only on an empty list.
+    ticket = {**copy.deepcopy(TICKET), "number": 5, "body": "Area: notes\n"}
+    issues = [parent, ticket]
+    status_ready = [i["number"] for i in _json(monkeypatch, capsys, tmp_path, issues, [])["ready"]]
+    ready_ready = [v["number"] for v in _ready_json(monkeypatch, capsys, tmp_path, issues, [])["ready"]]
+    assert status_ready == ready_ready == [5]
+
+
+def test_status_keeps_no_copy_of_the_parent_test():
+    """`issues.is_build_ticket` owns its parent test: `status` adds no copy of
+    it, and reads whether an issue is a parent as before, from each issue's own
+    `by_count` reading."""
+    from workflow import status as status_mod
+
+    assert not hasattr(status_mod, "_parent")
+
+
+@pytest.mark.parametrize(
+    "completed,detail",
+    [(1, "parent issue, 2 of 3 tickets open"), ("1", "parent issue, tickets unknown (no sub_issues_summary)")],
+    ids=repr,
+)
+def test_whether_an_issue_is_a_parent_is_its_own_never_its_numbers(monkeypatch, capsys, tmp_path, completed, detail):
+    """Two items with one number: the one whose own `total` is 0 is no parent."""
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    dup = {**copy.deepcopy(PARENT), "title": "Dup", "sub_issues_summary": {"total": 0, "completed": 1}}
+    got = _json(monkeypatch, capsys, tmp_path, [parent, dup], [])
+    assert [(i["number"], i["title"], i["detail"]) for i in got["specs"]] == [(1, "Parent", detail)]
+    text = _status(monkeypatch, capsys, tmp_path, [parent, dup], [])
+    assert "- #1 Dup [parent issue" not in text

@@ -8,6 +8,12 @@
 - **Unchanged:** `workflow status` and `workflow doctor` keep their lines, now from `profile.load` rather than their own copy in `cli._read_profile`. A profile that isn't valid TOML is refused as before.
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_unreadable.py`.
 
+**`workflow status` never lists a parent whose `completed` count has the wrong type as a ready build ticket** (#799, found in the review of #780's pull request). `workflow status` read a `sub_issues_summary` with a count of the wrong type as missing whole (#770), so a parent issue labelled `ready-for-agent` whose summary was `{"total": 3, "completed": "1"}` read as a build ticket: `Ready build tickets: 1` / `- #1 Parent [a]`, and #1 under `ready` in `--json`. `workflow ready` reads the same item as a parent since #780, so the two disagreed.
+
+- **A parent now,** whatever the type of its `completed` (`"1"`, `1.5`, `true`, `[1]`), when its `total` is a whole number above 0: `status` reads readiness as `ready` does (`status.as_read` with `by_count`), and whether an issue is a parent from that same reading of its own summary, as before from its `total`, so a parent is never a ready ticket in either, as `ready` reads it. It is listed with the specs and parents as `parent issue, tickets unknown (no sub_issues_summary)`.
+- **Unchanged:** a spec with such a summary still reads `tickets unknown (no sub_issues_summary)`; a summary whose `total` has the wrong type is still read as missing, by both commands.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_status_field_types.py`.
+
 **One shared test for control characters** (#823, found in the review of #821's pull request). The profile's `project.repo` check kept its own copy of Unicode's Cc set (`profile.CONTROL`), beside the copies in `issues.py`, `research.py` and `protection.py`.
 
 - **Shared now:** `issues.has_control` is the kit's one test of the Cc set (U+0000 to U+001F, U+007F to U+009F). The profile's `project.repo` check calls it, and `issues.escape_controls` builds its set from the same one, adding the separators and the bidirectional characters as before. `profile.CONTROL` is gone.
