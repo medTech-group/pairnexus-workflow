@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import glob
 import os
 import re
@@ -703,9 +704,29 @@ def read_file(path: Path) -> tuple[str | None, str | None]:
 def unreadable(e: OSError) -> ProfileError:
     """`load`'s refusal of a profile file an `OSError` stops it reading: the
     profile's path in the project and `cant_be_read`'s words, never the
-    absolute path (#829). `cli._load` gives it for the `OSError` `load` still
-    lets through (#837)."""
+    absolute path (#829). `load` gives it when asking whether the profile is
+    there fails (`missing`), and `cli._load` for any other `OSError` `load`
+    still lets through (#837)."""
     return ProfileError(f"{PROFILE_PATH} {cant_be_read(e)}")
+
+
+# The errors that say a path isn't there. Any other error asking for it means
+# it may be there but can't be read (#863).
+NOT_FOUND = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+
+
+def missing(path: Path) -> bool:
+    """Whether `path` isn't there: True only when asking fails with an error
+    saying so (`NOT_FOUND`), and any other `OSError` raised, as a path that is
+    there but can't be read (#863). One answer on every Python, where
+    `Path.exists` raises some errors up to 3.13 and answers False from 3.14."""
+    try:
+        path.stat()
+    except OSError as e:
+        if e.errno in NOT_FOUND:
+            return True
+        raise
+    return False
 
 
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
@@ -713,10 +734,14 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
     path = root / PROFILE_PATH
     # Each refusal names the profile by its path in the project, never the
     # absolute one, as `workflow status` and `workflow doctor` say it (#829).
-    text, why = read_file(path) if path.exists() else (None, None)
+    try:
+        gone = missing(path)
+    except OSError as e:  # there, but can't be read: never read as missing
+        raise unreadable(e) from None
+    text, why = (None, None) if gone else read_file(path)
     if why:
         raise ProfileError(f"{PROFILE_PATH} {why}")
-    if text is None:  # missing, or gone since `exists`
+    if text is None:  # missing, or gone since `missing`
         if required:
             raise ProfileError(f"no profile at {path}; run the setup-workflow skill first")
         return None

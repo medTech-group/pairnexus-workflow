@@ -30,6 +30,7 @@ refuses the tool when WORKFLOW_ROLE is firm, and doctor still gives its gap.
 
 import argparse
 import collections
+import errno
 import fnmatch
 import json
 import os
@@ -443,15 +444,26 @@ def _has_previews(root):
     return bool(_PREVIEWS_TABLE.search(text) or _PREVIEWS_KEY.search(text[:first.start()] if first else text))
 
 
+# The errors that say a path isn't there, as `profile.NOT_FOUND` (this module
+# can't import the kit): any other error asking for it is a path that may be
+# there but can't be read (#863).
+_NOT_FOUND = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+
+
 def _profile_text(root):
     """The profile's text, its bytes that aren't UTF-8 read as U+FFFD and a
     byte-order mark left out; "" when it is there but isn't a regular file
-    (a directory, or a pipe, never opened) or can't be read; None with no
-    profile."""
+    (a directory, or a pipe, never opened) or can't be read, and when asking
+    whether it is there fails with an error other than "not found"
+    (`_NOT_FOUND`, #863); None with no profile."""
     path = os.path.join(root, ".claude", "workflow", "profile.toml")
-    if not os.path.exists(path):
+    try:
+        st = os.stat(path)
+    except OSError as e:
+        return None if e.errno in _NOT_FOUND else ""
+    except ValueError:  # a NUL in the path: nothing there by that name
         return None
-    if not os.path.isfile(path):
+    if not stat.S_ISREG(st.st_mode):
         return ""
     try:
         f = _open_file(path, encoding="utf-8", errors="replace")

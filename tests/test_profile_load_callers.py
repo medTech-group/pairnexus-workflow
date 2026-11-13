@@ -28,9 +28,9 @@ from workflow.profile import PROFILE_PATH
 
 KIT = Path(__file__).resolve().parents[1]
 
-# `load` still asks whether the profile exists before its own error handling
-# (#837), so a path the system refuses (here a folder name too long) gives an
-# `OSError` there: refused in `load`'s words all the same.
+# A path the system refuses to look up (here a folder name too long) gives an
+# `OSError` when `load` asks whether the profile is there (`profile.missing`):
+# refused in `load`'s words all the same (#863).
 CANT_READ = f"{PROFILE_PATH} can't be read (OSError)"
 
 
