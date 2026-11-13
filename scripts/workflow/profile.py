@@ -642,6 +642,14 @@ def resolve_experience(root: Path | None, profile_value=None, environ=None) -> E
     return Experience(None, "unknown", warnings)
 
 
+def unreadable(e: OSError) -> ProfileError:
+    """`load`'s refusal of a profile file an `OSError` stops it reading: the
+    profile's path in the project and the error's type, never the absolute
+    path (#829). `cli._load` gives it for the `OSError` `load` still lets
+    through (#837)."""
+    return ProfileError(f"{PROFILE_PATH} can't be read ({type(e).__name__})")
+
+
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
     root = root or project_root()
     path = root / PROFILE_PATH
@@ -658,7 +666,7 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
     except UnicodeDecodeError:
         raise ProfileError(f"{PROFILE_PATH} isn't UTF-8 text") from None
     except OSError as e:
-        raise ProfileError(f"{PROFILE_PATH} can't be read ({type(e).__name__})") from None
+        raise unreadable(e) from None
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:

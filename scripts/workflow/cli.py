@@ -98,7 +98,7 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, project_root, resolve_experience
+from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, project_root, resolve_experience, unreadable
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -921,6 +921,18 @@ def _charter_estimate(a) -> int:
     return 0
 
 
+def _load(root: Path | None = None, required: bool = True):
+    """`load`, with the `OSError` it still lets through, from asking whether
+    the profile exists (a folder that can't be searched, a path too long),
+    refused in `load`'s words (`profile.unreadable`): the callers here that
+    refuse a profile they can't read catch `ProfileError` alone. Until #837
+    moves that question inside `load`'s error handling."""
+    try:
+        return load(root, required=required)
+    except OSError as e:
+        raise unreadable(e) from None
+
+
 def _page_profile():
     """The profile for the one page's size and review, or None when it can't be
     read: a broken profile never stops the page from rendering."""
@@ -971,7 +983,7 @@ def _charter_change_problems(old, new) -> list[str]:
     if not isinstance(c, dict) or charter_mod.validate(c):
         return []
     try:
-        prof = load(required=False)
+        prof = _load(required=False)
     except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
         raise ProfileError(f"{e}, so the charter change can't be checked") from None
     if prof is None:
@@ -1356,7 +1368,7 @@ def cmd_preview(a) -> int:
     missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
     if a.fetch is not None and missing:
         try:
-            prof = load(required=False)
+            prof = _load(required=False)
         except ProfileError as e:  # `load` words a file it can't read (#829)
             prof, why = None, f"the profile can't be read ({e})"
         else:
@@ -1504,7 +1516,7 @@ def _research_patterns() -> list[str]:
     command prints or writes. No profile: none. A profile that can't be read
     stops the command (exit 1), rather than print text unchecked."""
     try:
-        prof = load(required=False)
+        prof = _load(required=False)
     except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
         raise ProfileError(f"{e}, so [sensitive].patterns can't be left out") from None
     return list(prof.sensitive_patterns) if prof else []

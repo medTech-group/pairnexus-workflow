@@ -18,15 +18,37 @@ import fake_gh
 from changelog_notes import since_0110
 from test_profile_unreadable import NOT_UTF8, _not_utf8
 from workflow import charter, cli, state
+from workflow.profile import PROFILE_PATH
 
 KIT = Path(__file__).resolve().parents[1]
 
+# `load` still asks whether the profile exists before its own error handling
+# (#837), so a path the system refuses (here a folder name too long) gives an
+# `OSError` there: refused in `load`'s words all the same.
+CANT_READ = f"{PROFILE_PATH} can't be read (OSError)"
 
-def _here(tmp_path, monkeypatch, capsys):
+
+def _a_profile_not_utf8(tmp_path):
     _not_utf8(tmp_path, b'[sensitive]\npatterns = ["secret-[0-9]+"]\n')
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    return tmp_path
+
+
+def _a_path_too_long(tmp_path):
+    (tmp_path / "long").mkdir()
+    return tmp_path / "long" / ("a" * 300)
+
+
+SHAPES = [(_a_profile_not_utf8, NOT_UTF8), (_a_path_too_long, CANT_READ)]
+
+
+@pytest.fixture(params=SHAPES, ids=["not-utf8", "path-too-long"])
+def said(request, tmp_path, monkeypatch, capsys):
+    """The project, in each shape of a profile `load` can't read, and its words for it."""
+    make, words = request.param
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(make(tmp_path)))
     monkeypatch.chdir(tmp_path)
     capsys.readouterr()
+    return words
 
 
 def _charter():
@@ -35,8 +57,7 @@ def _charter():
     return c
 
 
-def test_a_charter_change_gives_loads_words_then_its_context(tmp_path, monkeypatch, capsys):
-    _here(tmp_path, monkeypatch, capsys)
+def test_a_charter_change_gives_loads_words_then_its_context(tmp_path, capsys, said):
     s = state.empty(_charter())
     s["run_id"] = "2026-11-13-unreadable"
     (tmp_path / "body.md").write_text(state.put("## Run\n", s), encoding="utf-8")
@@ -49,32 +70,30 @@ def test_a_charter_change_gives_loads_words_then_its_context(tmp_path, monkeypat
     out, err = capsys.readouterr()
     assert rc == 1
     assert out == ""
-    assert err == f"workflow: {NOT_UTF8}, so the charter change can't be checked\n"
+    assert err == f"workflow: {said}, so the charter change can't be checked\n"
     assert "Traceback" not in err and str(tmp_path) not in err
     assert not (tmp_path / "new.md").exists()
 
 
-def test_preview_fetch_gives_loads_words(tmp_path, monkeypatch, capsys):
-    _here(tmp_path, monkeypatch, capsys)
+def test_preview_fetch_gives_loads_words(tmp_path, monkeypatch, capsys, said):
     gh = fake_gh.install(tmp_path, monkeypatch, {})
     rc = cli.main(["preview", "--fetch", "12"])
     out, err = capsys.readouterr()
     assert rc == 2
     assert out == ""
-    assert NOT_UTF8 in err
+    assert f"the profile can't be read ({said}): " in err
     assert err.startswith("workflow preview: --fetch needs the profile's project.repo, and ")
     assert "Traceback" not in err and str(tmp_path) not in err
     assert gh.calls() == []
 
 
-def test_research_gives_loads_words_then_its_context(tmp_path, monkeypatch, capsys):
-    _here(tmp_path, monkeypatch, capsys)
+def test_research_gives_loads_words_then_its_context(tmp_path, capsys, said):
     (tmp_path / "page.txt").write_text("A paragraph naming secret-123.\n", encoding="utf-8")
     rc = cli.main(["research", "fingerprint", "https://example.com/page", "--page", str(tmp_path / "page.txt")])
     out, err = capsys.readouterr()
     assert rc == 1
     assert out == ""
-    assert err == f"workflow: {NOT_UTF8}, so [sensitive].patterns can't be left out\n"
+    assert err == f"workflow: {said}, so [sensitive].patterns can't be left out\n"
     assert "Traceback" not in err and str(tmp_path) not in err
 
 
@@ -87,7 +106,7 @@ def _functions():
 
 
 def _calls_load(node):
-    return any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "load" for c in ast.walk(node))
+    return any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in ("load", "_load") for c in ast.walk(node))
 
 
 def _caught(handler):
