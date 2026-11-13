@@ -226,6 +226,13 @@ def test_the_hook_command_builds_its_decisions_through_the_shared_builder():
     assert "_old_python._decision" in inspect.getsource(vendor.hook_command)
 
 
+@pytest.mark.parametrize("name", ["_decision", "DEFAULT_TICKET_BRANCH"])
+def test_the_shared_helpers_the_hook_command_uses_are_listed_on_their_page(name):
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8").splitlines()
+    (line,) = [line for line in page if line.startswith(f"- `{name}`: in `_old_python.py`,")]
+    assert "vendor.hook_command" in line or "hook command" in line
+
+
 # ---------- the wording ----------
 
 

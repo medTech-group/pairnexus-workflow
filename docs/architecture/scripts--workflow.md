@@ -62,6 +62,8 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `_profile_text`: in `_old_python.py`, the profile's text read without the kit: None with no profile, "" when it is there but can't be read, a byte-order mark left out. It asks whether the profile is there through `missing`. `_ticket_branch` and doctor's `_overview_unlisted` read through it.
 - `missing`: in `_old_python.py`, whether a path isn't there: True for an error saying so (`NOT_FOUND`: ENOENT, ENOTDIR, ELOOP) or a path that can't name a file, False when it is there, any other `OSError` raised, as a path that is there but can't be read. The one copy of the check, in Python 3.7's syntax so both paths read it: `profile.py` gives it on as `profile.missing`, and `load`, `cli._cant_decide` and `_profile_text` ask whether the profile is there through it.
 - `_open_file`: in `_old_python.py`, a path opened as `open` opens it, or None when it isn't a file; `_experience_file` and `_profile_text` read through it.
+- `_decision`: in `_old_python.py`, the guard's PreToolUse decision object; `vendor.hook_command` builds its printed decisions through it.
+- `DEFAULT_TICKET_BRANCH`: in `_old_python.py`, `run.ticket_branch`'s default; the hook command's branch match falls back to it.
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Rules
