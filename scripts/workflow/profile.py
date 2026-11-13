@@ -39,6 +39,12 @@ DEFAULT_TEST_PATHS = [
 ]
 
 
+# The control characters (Unicode's Cc: C0, DEL and C1), refused in
+# project.repo, which goes into `gh api` paths and command lines (#821).
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+REPO_CONTROL = "project.repo must be owner/repo, without control characters"
+
+
 class ProfileError(ValueError):
     pass
 
@@ -396,6 +402,8 @@ def parse(data: dict, root: Path) -> Profile:
         raise ProfileError("project.name is required")
     if not isinstance(repo, str) or repo.count("/") != 1:
         raise ProfileError("project.repo must be owner/repo")
+    if CONTROL.search(repo):  # a NUL ended `subprocess.run(["gh", …])` (#821); #327 widens this to its owner/name rule
+        raise ProfileError(REPO_CONTROL)
     owner = proj.get("owner") or ""
     if not isinstance(owner, str) or (owner and not OWNER.match(owner)):
         raise ProfileError("project.owner must be a GitHub login (letters, digits and hyphens), without the @")

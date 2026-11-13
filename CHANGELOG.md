@@ -8,6 +8,13 @@
 - **Unchanged:** a single `-`, for `--issues` or for `--prs`, still reads standard input; `--fetch` reads no file.
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_issues_prs_one_stdin.py`.
 
+**The profile refuses a `project.repo` holding a control character** (#821, found in the review of #792's pull request). The profile's check took any `project.repo` with one `/`, so `repo = "acme/de\u0000mo"` was taken, and `workflow status --fetch` (and `workflow ready --fetch` and `workflow state join --fetch`) ended in `ValueError: embedded null byte` when it ran `gh api` with it.
+
+- **Refused now** when the profile is read, in one line worded like the existing one: `project.repo must be owner/repo, without control characters`, for a NUL or any other control character (Unicode's Cc: U+0000 to U+001F, U+007F to U+009F; a newline or a tab among them). `workflow profile check`, `workflow status --fetch`, `workflow ready --fetch` and `workflow state join --fetch` print it as `workflow: project.repo must be owner/repo, without control characters`, exit 1, with nothing on standard output; no command reaches `gh` with it.
+- **`workflow status --fetch`** with any other profile error is unchanged: it reads no issues, says so in its one line on standard error and still prints its report, exit 0.
+- **Unchanged:** an ordinary repo is taken, and so is one with a character that isn't a control character, such as a backtick or U+202E (#792 shows those escaped when `gh api` fails). The rest of the `owner/name` rule is #327's.
+- **For projects updating:** nothing to do, unless your `project.repo` holds a control character. `VERSION` is unchanged. Tests: `tests/test_profile_repo_control.py`.
+
 **`workflow status --fetch` shows the repo escaped when `gh api` fails** (#792, found in the review of #775's pull request). When `gh api` failed, `workflow status --fetch` (and `workflow ready --fetch` and `workflow state join --fetch`, which read through the same fetch) printed the profile's `project.repo` raw in its `gh api repos/<repo>/issues?… failed: …` line, so `repo = "acme/de\nmo"` split the line in two, and a backtick or U+202E in the name printed as it is, while #775's refusal of the same command showed it escaped.
 
 - **Escaped now,** through `reviews._shown`, as #775's refusal shows it: `` gh api repos/acme/de\nmo/issues?state=all&per_page=100 failed: gh: Not Found (HTTP 404) ``, on one line, a backtick as `` \` `` and U+202E as `\u202e`. It holds for `--slurp`'s failure, an old `gh`'s and the page-by-page fallback's (#568), where the repo in `fetch.by_page`'s own message (`gh api repos/<repo>/issues has more than … pages`) is shown escaped too.
