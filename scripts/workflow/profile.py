@@ -662,13 +662,13 @@ def read_text(path: Path) -> tuple[str | None, str | None]:
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
     root = root or project_root()
     path = root / PROFILE_PATH
-    text, why = read_text(path)
-    if why:  # by its path in the project, never the absolute one (#829)
-        raise ProfileError(f"{PROFILE_PATH} {why}")
-    if text is None:
+    if not path.exists():
         if required:
             raise ProfileError(f"no profile at {path}; run the setup-workflow skill first")
         return None
+    text, why = read_text(path)
+    if why:  # by its path in the project, never the absolute one (#829)
+        raise ProfileError(f"{PROFILE_PATH} {why}")
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:

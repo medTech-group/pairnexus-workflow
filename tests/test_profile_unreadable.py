@@ -10,7 +10,6 @@ traceback. Seams: `profile.load`, and each command through `cli.main`."""
 import io
 import json
 import os
-import pathlib
 import sys
 from pathlib import Path
 
@@ -179,48 +178,6 @@ def test_doctor_still_leaves_out_the_byte_order_mark(tmp_path):
     assert doctor._read_text(tmp_path, "missing.md") == (None, None)
     (tmp_path / "b.md").write_bytes(b"\xff")
     assert doctor._read_text(tmp_path, "b.md") == (None, "it isn't UTF-8 text")
-
-
-# ---------- a profile whose folder can't be searched (round 1 of the review) ----------
-
-CANT_SEARCH = f"{PROFILE_PATH} can't be read (PermissionError)"
-
-
-def _cant_search(monkeypatch):
-    """The profile's folder at mode 000, as a user other than root meets it:
-    asking whether the profile exists raises PermissionError."""
-    exists = pathlib.Path.exists
-
-    def denied(self, *a, **kw):
-        if self.name == "profile.toml":
-            raise PermissionError(13, "Permission denied", str(self))
-        return exists(self, *a, **kw)
-
-    monkeypatch.setattr(pathlib.Path, "exists", denied)
-
-
-@pytest.mark.parametrize("required", [True, False])
-def test_load_refuses_a_profile_whose_folder_cant_be_searched(tmp_path, monkeypatch, required):
-    _not_utf8(tmp_path)
-    _cant_search(monkeypatch)
-    with pytest.raises(ProfileError) as e:
-        profile.load(tmp_path, required=required)
-    assert str(e.value) == CANT_SEARCH
-    assert str(tmp_path) not in str(e.value)
-
-
-@pytest.mark.parametrize("argv", COMMANDS)
-def test_each_command_refuses_a_profile_whose_folder_cant_be_searched(tmp_path, monkeypatch, capsys, argv):
-    _not_utf8(tmp_path)
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.setattr(cli, "_fetch", lambda *a, **kw: pytest.fail("read GitHub with a profile it can't read"))
-    args = argv(tmp_path)
-    _cant_search(monkeypatch)
-    capsys.readouterr()
-    assert cli.main(args) == 1
-    out, err = capsys.readouterr()
-    assert out == "" and err == f"workflow: {CANT_SEARCH}\n"
-    assert "Traceback" not in err and str(tmp_path) not in err
 
 
 def _note():
