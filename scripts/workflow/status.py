@@ -217,13 +217,14 @@ def snapshot(
     # Readiness, and whether an issue is a parent, read a summary as `workflow ready`
     # does: only its count of the wrong type left out, so a parent whose `total` is a
     # whole number stays a parent, never a ready build ticket (#799). The sections'
-    # counts read the summary left out whole: its tickets unknown (#770).
+    # counts read the summary left out whole: its tickets unknown (#770). Each item is
+    # paired with its own counted read, never another item's of the same number.
     counted, counted_prs = [as_read(i, by_count=True) for i in issues], [as_read(p, by_count=True) for p in prs]
-    parents = {i["number"] for i in counted if "pull_request" not in i and _parent(i)}
     issues, prs = [as_read(i) for i in issues], [as_read(p) for p in prs]
     lab = issues_mod.labels_of
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
-    for i in sorted((i for i in issues if "pull_request" not in i and _open(i)), key=lambda i: i["number"]):
+    open_issues = ((i, c) for i, c in zip(issues, counted) if "pull_request" not in i and _open(i))
+    for i, c in sorted(open_issues, key=lambda p: p[0]["number"]):
         n, title, labels, body = i["number"], i.get("title") or "", lab(i), i.get("body") or ""
         kids = _children(i)
         if "workflow:run" in labels:
@@ -242,7 +243,7 @@ def snapshot(
         is_spec = issues_mod.is_spec(i)
         path = item_path(body)
         # The item's own section, then held over it (#514), unless it already waits on a person (#577).
-        if is_spec or _parent(i) or n in parents:
+        if is_spec or _parent(c):
             kind = "" if is_spec else "parent issue, "
             if kids is None:
                 detail = "tickets unknown (no sub_issues_summary)"

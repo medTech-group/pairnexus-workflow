@@ -313,3 +313,18 @@ def test_an_issue_whose_total_is_not_above_0_is_never_a_parent(monkeypatch, caps
     text = _status(monkeypatch, capsys, tmp_path, [issue, ticket], [])
     assert "parent issue" not in text
     assert [l for l in _ready_section(text) if l.startswith("- #1 ")] == ["- #1 Parent [a]"]
+
+
+@pytest.mark.parametrize(
+    "completed,detail",
+    [(1, "parent issue, 2 of 3 tickets open"), ("1", "parent issue, tickets unknown (no sub_issues_summary)")],
+    ids=repr,
+)
+def test_whether_an_issue_is_a_parent_is_its_own_never_its_numbers(monkeypatch, capsys, tmp_path, completed, detail):
+    """Two items with one number: the one whose own `total` is 0 is no parent."""
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    dup = {**copy.deepcopy(PARENT), "title": "Dup", "sub_issues_summary": {"total": 0, "completed": 1}}
+    got = _json(monkeypatch, capsys, tmp_path, [parent, dup], [])
+    assert [(i["number"], i["title"], i["detail"]) for i in got["specs"]] == [(1, "Parent", detail)]
+    text = _status(monkeypatch, capsys, tmp_path, [parent, dup], [])
+    assert "- #1 Dup [parent issue" not in text
