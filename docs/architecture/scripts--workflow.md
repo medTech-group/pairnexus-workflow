@@ -1,3 +1,4 @@
+Covers: scripts/workflow/_old_python.py
 Covers: scripts/workflow/cli.py
 Covers: scripts/workflow/evidence.py
 Covers: scripts/workflow/graph.py
@@ -51,6 +52,7 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `cant_be_read`: in `profile.py`, the words for a file (or standard input) an error stops the kit reading, `can't be read (<the error's type>)`, never the error's message. `file_problem`, `read_file`, `unreadable` and doctor's `_stdin` all give them (#836, #847).
 - `unreadable`: in `profile.py`, `load`'s refusal of a profile file an `OSError` stops it reading, `.claude/workflow/profile.toml` and `cant_be_read`'s words; `cli._load` gives it (#832).
 - `_load`: in `cli.py`, `load`, with the `OSError` it still lets through from asking whether the profile exists (a folder that can't be searched, a path too long) refused in `unreadable`'s words, so its callers catch `ProfileError` alone: a charter change, `preview --fetch`, `research`, `merge-check` and `review-record`. Until #837 moves that question inside `load` (#832).
+- `_profile_text`: in `_old_python.py`, the profile's text read without the kit: None with no profile, "" when something is there that isn't a regular file or can't be read, a byte-order mark left out. Only a regular file is read. `_ticket_branch` (so a role read without the kit gives the default `run.ticket_branch` for such a profile, as the kit refuses it as invalid) and doctor's `_overview_unlisted` read through it (#833).
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Rules

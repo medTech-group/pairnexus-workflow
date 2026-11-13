@@ -62,18 +62,16 @@ def _branch(where):
 
 def _ticket_branch(root):
     """The profile's run.ticket_branch, or None when the kit isn't set up (the
-    CLI never takes a role from the branch without a profile). Read only when
-    it is a regular file (or a symlink to one), and opened without waiting: a
-    directory or a pipe reads as a profile that can't be read."""
-    path = os.path.join(root, ".claude", "workflow", "profile.toml")
+    CLI never takes a role from the branch without a profile). Read through
+    `_profile_text`: a profile that is there but can't be read gives the
+    default, as the kit refuses it as an invalid profile."""
     try:
-        if not os.path.isfile(path):
-            return None
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-        with open(fd, encoding="utf-8", errors="replace") as f:
-            m = _TICKET_BRANCH.search(f.read())
+        text = _profile_text(root)
     except (OSError, ValueError, TypeError):
         return None
+    if text is None:
+        return None
+    m = _TICKET_BRANCH.search(text)
     return m.group(1) if m else DEFAULT_TICKET_BRANCH
 
 
@@ -447,10 +445,20 @@ def _profile_text(root):
     if not os.path.isfile(path):
         return ""
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except (OSError, ValueError, TypeError):
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return ""
+        with open(fd, encoding="utf-8", errors="replace") as f:
+            fd = None
             return f.read().lstrip("\ufeff")
     except (OSError, ValueError):
         return ""
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 def _overview_unlisted(root):

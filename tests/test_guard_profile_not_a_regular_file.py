@@ -54,7 +54,18 @@ def _a_link_to_a_pipe(root, tmp_path):
     os.symlink(target, root / PROFILE)
 
 
-MAKES = [pytest.param(_a_pipe, id="pipe"), pytest.param(_a_link_to_a_pipe, id="link-to-pipe")]
+def _shape_3(root, tmp_path):
+    (root / PROFILE).mkdir()
+
+
+def _shape_4(root, tmp_path):
+    os.symlink(os.devnull, root / PROFILE)
+
+
+MAKES = [
+    pytest.param(_a_pipe, id="pipe"), pytest.param(_a_link_to_a_pipe, id="link-to-pipe"),
+    pytest.param(_shape_3, id="shape-3"), pytest.param(_shape_4, id="shape-4"),
+]
 
 
 def _argv(path):
@@ -87,13 +98,44 @@ def _guard(path, root, event, role=None):
 
 @pytest.mark.parametrize("path", PATHS)
 @pytest.mark.parametrize("make", MAKES)
-@pytest.mark.parametrize("branch", ["main", "claude/build-1"])
-def test_an_attended_session_gets_the_fallback_at_once(tmp_path, path, make, branch):
-    root = _project(tmp_path, branch)
+def test_an_attended_session_gets_the_fallback_at_once(tmp_path, path, make):
+    root = _project(tmp_path)
     make(root, tmp_path)
     assert _guard(path, root, LS) == (0, None, "")
     code, decision, _ = _guard(path, root, PUSH)
     assert (code, decision) == (0, "ask")
+
+
+@pytest.mark.parametrize("path", PATHS)
+@pytest.mark.parametrize("make", MAKES)
+def test_on_a_ticket_branch_without_a_role_every_tool_is_refused(tmp_path, path, make):
+    """Something is at the profile's path but it isn't a regular file: the
+    kit is set up, so the default `run.ticket_branch` decides, as for an
+    invalid profile."""
+    root = _project(tmp_path, "claude/build-1")
+    make(root, tmp_path)
+    for event in (LS, PUSH):
+        code, decision, _ = _guard(path, root, event)
+        assert (code, decision) == (0, "deny")
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_on_a_ticket_branch_with_no_profile_the_guard_leaves_it_alone(tmp_path, path):
+    root = _project(tmp_path, "claude/build-1")
+    assert _guard(path, root, LS) == (0, None, "")
+
+
+@pytest.mark.parametrize("make", MAKES)
+def test_without_the_kit_session_start_says_every_tool_is_refused(tmp_path, make):
+    root = _project(tmp_path, "claude/build-1")
+    make(root, tmp_path)
+    env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", str(root)), "CLAUDE_PROJECT_DIR": str(root)}
+    p = subprocess.run(
+        _argv("old-python") + ["hook", "repair"], input=json.dumps({"cwd": str(root)}),
+        capture_output=True, text=True, env=env, cwd=root, timeout=SECONDS,
+    )
+    assert p.returncode == 0
+    assert "every tool is refused" in json.loads(p.stdout)["hookSpecificOutput"]["additionalContext"]
 
 
 @pytest.mark.parametrize("path", PATHS)
@@ -149,10 +191,30 @@ def test_a_symlink_to_a_regular_profile_reads_as_before(tmp_path):
     assert fallback.solo(tmp_path) is True
 
 
-def test_a_directory_still_reads_as_unreadable(tmp_path):
+def test_a_directory_gives_the_default_ticket_branch(tmp_path):
     (tmp_path / PROFILE).mkdir(parents=True)
-    assert _old_python._ticket_branch(str(tmp_path)) is None
+    assert _old_python._ticket_branch(str(tmp_path)) == _old_python.DEFAULT_TICKET_BRANCH
     assert fallback.solo(tmp_path) is False
+
+
+def test_a_profile_that_cant_be_opened_gives_the_default_ticket_branch(tmp_path, monkeypatch):
+    _write(tmp_path, '[run]\nticket_branch = "work/t-*"\n')
+
+    def denied(*a, **kw):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(_old_python.os, "open", denied)
+    assert _old_python._ticket_branch(str(tmp_path)) == _old_python.DEFAULT_TICKET_BRANCH
+
+
+def test_the_ticket_branch_is_read_through_the_profile_reader(monkeypatch):
+    """One reader of the profile's text in `_old_python` (#833's review)."""
+    monkeypatch.setattr(_old_python, "_profile_text", lambda root: '[run]\nticket_branch = "x/*"\n')
+    assert _old_python._ticket_branch("nowhere") == "x/*"
+    monkeypatch.setattr(_old_python, "_profile_text", lambda root: "")
+    assert _old_python._ticket_branch("nowhere") == _old_python.DEFAULT_TICKET_BRANCH
+    monkeypatch.setattr(_old_python, "_profile_text", lambda root: None)
+    assert _old_python._ticket_branch("nowhere") is None
 
 
 # ---------- the changelog ----------
