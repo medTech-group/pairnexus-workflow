@@ -144,6 +144,40 @@ def test_fetch_run_and_cli_fetch_word_it_through_the_one_helper(monkeypatch):
     assert got.value.said == "can't run `gh api repos/acme/demo/issues`: the one wording (PermissionError)"
 
 
+def test_cli_fetch_names_the_pulls_when_it_reads_them(monkeypatch):
+    """Reading the pull requests, the refusal names `gh api repos/<repo>/pulls`."""
+    from workflow import cli
+
+    def no_gh(*a, **k):
+        raise FileNotFoundError(2, "No such file or directory", "gh")
+
+    monkeypatch.setattr(cli.subprocess, "run", no_gh)
+    with pytest.raises(cli.GhNotRun) as got:
+        cli._fetch("acme/demo", "pulls")
+    assert got.value.said == f"can't run `gh api repos/acme/demo/pulls`: {fetch.NOT_INSTALLED}"
+
+
+def test_cli_fetch_without_slurp_refuses_a_gh_that_cant_be_run_too(monkeypatch):
+    """An old `gh` refuses `--slurp`; when the call without it can't run gh,
+    that is refused in the same words, never a traceback."""
+    from workflow import cli
+
+    calls = []
+
+    def old_gh_then_gone(args, *a, **k):
+        calls.append(args)
+        if len(calls) == 1:
+            assert "--slurp" in args
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="unknown flag: --slurp\n")
+        raise FileNotFoundError(2, "No such file or directory", "gh")
+
+    monkeypatch.setattr(cli.subprocess, "run", old_gh_then_gone)
+    with pytest.raises(cli.GhNotRun) as got:
+        cli._fetch("acme/demo", "issues")
+    assert got.value.said == f"can't run `gh api repos/acme/demo/issues`: {fetch.NOT_INSTALLED}"
+    assert len(calls) == 2 and "--slurp" not in calls[1]
+
+
 def test_the_page_lists_the_helper():
     page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
     assert "Covers: scripts/workflow/fetch.py\n" in page
