@@ -170,6 +170,33 @@ def test_the_ticket_branch_line_reads_as_before(tmp_path):
     assert _old_python._ticket_branch(str(tmp_path / "nowhere")) is None
 
 
+def _marked(root, mark):
+    """The template profile with a `ticket_branch = "work/*"` line before it,
+    and a byte-order mark first when `mark`."""
+    text = 'ticket_branch = "work/*"\n' + (KIT / "templates/profile.toml").read_text(encoding="utf-8")
+    (root / PROFILE).parent.mkdir(parents=True, exist_ok=True)
+    (root / PROFILE).write_bytes((b"\xef\xbb\xbf" if mark else b"") + text.encode("utf-8"))
+
+
+@pytest.mark.parametrize("mark", [True, False], ids=["mark", "no-mark"])
+def test_a_byte_order_mark_before_the_ticket_branch_line_reads_as_without_it(tmp_path, mark):
+    _marked(tmp_path, mark)
+    assert _old_python._ticket_branch(str(tmp_path)) == "work/*"
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_with_a_byte_order_mark_the_ticket_branch_line_decides(tmp_path, path):
+    root = _project(tmp_path, "work/1")
+    _marked(root, True)
+    for event in (LS, PUSH):
+        code, decision, _ = _guard(path, root, event)
+        assert (code, decision) == (0, "deny")
+    subprocess.run(GIT + ["-C", str(root), "checkout", "-q", "-b", "claude/build-1"], check=True)
+    assert _guard(path, root, LS) == (0, None, "")
+    code, decision, _ = _guard(path, root, PUSH)
+    assert (code, decision) == (0, "ask")
+
+
 def test_the_ruleset_line_reads_as_before(tmp_path):
     _write(tmp_path, "ruleset = false\n")
     assert fallback.solo(tmp_path) is True
