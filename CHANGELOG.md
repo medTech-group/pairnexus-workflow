@@ -4,7 +4,7 @@
 
 **`workflow ready` and `workflow status` say standard input is already `--issues`'s when `--prs` is `-` too** (#794, found in the review of #779's pull request). With `--issues -` and `--prs -` both, `--issues` read standard input whole and `--prs` found nothing left, so `workflow ready --issues - --prs - < issues.json` (and `workflow status` the same way) printed `` workflow: can't read standard input (-): it is empty ``, exit 1, though it wasn't empty.
 
-- **Refused in one line now,** before either is read, on standard error, nothing on standard output, exit 1, with or without `--json`: `` workflow ready: --prs: standard input (-) is already --issues's: only one file can be read from it `` (`workflow status:` for `status`), the words `ready` gives `--permissions` on standard input `--prs` already read. One helper, `cli._stdin_taken_line`, gives both commands the line.
+- **Refused in one line now,** before either is read, on standard error, nothing on standard output, exit 1, with or without `--json`: `` workflow ready: --prs: standard input (-) is already --issues's: only one file can be read from it `` (`workflow status:` for `status`), the words `ready` gives `--permissions` on standard input `--prs` already read. One helper, `cli._stdin_taken_line`, gives both commands the line, and one, `cli._stdin_taken`, the words, for it, for `--permissions` and for the commands that read their files as merge-check does, so they stay alike.
 - **Unchanged:** a single `-`, for `--issues` or for `--prs`, still reads standard input; `--fetch` reads no file.
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_issues_prs_one_stdin.py`.
 

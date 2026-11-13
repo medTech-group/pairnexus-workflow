@@ -6,13 +6,16 @@ for `--issues` or for `--prs`, still reads standard input. Run through
 `cli.main`.
 """
 
+import argparse
 import io
 import json
+from pathlib import Path
 
 import pytest
 
 from changelog_notes import entry
 from workflow import cli
+from workflow import issues as issues_mod
 
 ISSUES = [
     {"number": 10, "title": "Notes 10", "state": "open", "labels": [{"name": "ready-for-agent"}], "body": "Area: notes"},
@@ -89,6 +92,42 @@ def test_ready_reads_the_tickets_from_standard_input(monkeypatch, capsys, tmp_pa
     got = json.loads(out)
     assert [v["number"] for v in got["ready"]] == [10]
     assert [v["number"] for v in got["not_ready"]] == [11]
+
+
+# ---------- one helper words it ----------
+
+TAKEN = "standard input (-) is already --issues's: only one file can be read from it"
+
+
+def test_one_helper_gives_the_words_with_the_flag_or_without():
+    assert cli._stdin_taken("prs", "issues") == f"--prs: {TAKEN}"
+    assert cli._stdin_taken(None, "comments") == TAKEN.replace("--issues's", "--comments's")
+
+
+def test_the_words_are_written_once_in_cli():
+    source = Path(cli.__file__).read_text(encoding="utf-8")
+    assert source.count("only one file can be read from it") == 1
+
+
+def test_each_refusal_of_a_second_standard_input_words_it_through_the_helper(monkeypatch):
+    """`ready` and `status`'s line, `_json_inputs`' reason (merge-check and
+    the rest) and `ready`'s `--permissions` note: a rewording of the helper
+    reaches all three."""
+    monkeypatch.setattr(cli, "_stdin_taken", lambda flag, owner: f"taken {flag} {owner}")
+    assert cli._stdin_taken_line("ready", "-", "-") == "workflow ready: taken prs issues"
+    _stdin(monkeypatch, "[]")
+    inputs = cli._json_inputs(argparse.Namespace(comments="-", checks="-"), ["comments", "checks"])
+    assert inputs["checks"] == (None, "taken None comments")
+    told = []
+
+    def note(verdicts, issues, repo, comments, permissions, pull_numbers):
+        with pytest.raises(issues_mod.SpecReviewsUnread) as e:
+            permissions(["owner"])
+        told.append(str(e.value))
+
+    monkeypatch.setattr(cli.issues_mod, "note_unreviewed_specs", note)
+    cli._note_unreviewed_specs([], [], [], "acme/demo", "-", "prs")
+    assert told == ["taken permissions prs"]
 
 
 # ---------- the changelog note ----------

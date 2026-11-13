@@ -176,13 +176,22 @@ def _issues_file(path: str, what: str) -> list[dict]:
     return _fetch_items(value)
 
 
+def _stdin_taken(flag: str | None, owner: str) -> str:
+    """Why `--<flag>`'s `-` can't be read: standard input (-) is already
+    `--<owner>`'s, and can be read once. The one place for these words:
+    `_stdin_taken_line`, `_json_inputs` (no flag) and `ready`'s
+    `--permissions` give them through it (#794)."""
+    why = f"standard input (-) is already --{owner}'s: only one file can be read from it"
+    return f"--{flag}: {why}" if flag else why
+
+
 def _stdin_taken_line(cmd: str, issues_path: str, prs_path: str) -> str | None:
     """The one line `workflow <cmd>` refuses `--issues -` and `--prs -` with
     (#794), or None: standard input can be read once, so `--issues`'s read
     left `--prs` nothing and `_read` said "it is empty". Checked before
-    either is read, in the words `ready` gives `--permissions` (#757)."""
+    either is read, in `_stdin_taken`'s words."""
     if issues_path == "-" and prs_path == "-":
-        return f"workflow {cmd}: --prs: standard input (-) is already --issues's: only one file can be read from it"
+        return f"workflow {cmd}: {_stdin_taken('prs', 'issues')}"
     return None
 
 
@@ -499,7 +508,7 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
             if not permissions_file.strip():
                 raise issues_mod.SpecReviewsUnread("--permissions was given no file")
             if permissions_file == "-" and stdin_for:
-                raise issues_mod.SpecReviewsUnread(f"--permissions: standard input (-) is already --{stdin_for}'s: only one file can be read from it")
+                raise issues_mod.SpecReviewsUnread(_stdin_taken("permissions", stdin_for))
             if not given:  # read as merge-check reads its --permissions
                 given.append(_json_inputs(argparse.Namespace(permissions=permissions_file), ["permissions"])["permissions"])
             value, why = given[0]
@@ -1209,7 +1218,7 @@ def _json_inputs(a, names, raw=()) -> dict:
             continue
         if path == "-":
             if stdin_for is not None:
-                inputs[name] = (None, f"standard input (-) is already --{stdin_for}'s: only one file can be read from it")
+                inputs[name] = (None, _stdin_taken(None, stdin_for))
                 continue
             stdin_for = name
         try:
