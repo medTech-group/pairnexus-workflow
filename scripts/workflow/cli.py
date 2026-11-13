@@ -926,7 +926,7 @@ def _page_profile():
     read: a broken profile never stops the page from rendering."""
     try:
         return load(required=False)
-    except (ValueError, OSError):  # ProfileError is a ValueError; so is a file that isn't UTF-8
+    except (ValueError, OSError):  # ProfileError is a ValueError, and `load` words a file it can't read as one (#829)
         return None
 
 
@@ -972,8 +972,8 @@ def _charter_change_problems(old, new) -> list[str]:
         return []
     try:
         prof = load(required=False)
-    except (UnicodeDecodeError, OSError) as e:
-        raise ProfileError(f"the profile can't be read ({e}), so the charter change can't be checked") from e
+    except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
+        raise ProfileError(f"{e}, so the charter change can't be checked") from None
     if prof is None:
         print("note: no profile found: the charter change wasn't checked against it", file=sys.stderr)
         return []
@@ -1357,10 +1357,8 @@ def cmd_preview(a) -> int:
     if a.fetch is not None and missing:
         try:
             prof = load(required=False)
-        except ProfileError as e:
+        except ProfileError as e:  # `load` words a file it can't read (#829)
             prof, why = None, f"the profile can't be read ({e})"
-        except (OSError, UnicodeDecodeError) as e:
-            prof, why = None, f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e})"
         else:
             why = f"there's no profile ({PROFILE_PATH})"
         if prof is None:
@@ -1507,8 +1505,8 @@ def _research_patterns() -> list[str]:
     stops the command (exit 1), rather than print text unchecked."""
     try:
         prof = load(required=False)
-    except (OSError, UnicodeDecodeError) as e:
-        raise ProfileError(f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e}), so [sensitive].patterns can't be left out") from None
+    except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
+        raise ProfileError(f"{e}, so [sensitive].patterns can't be left out") from None
     return list(prof.sensitive_patterns) if prof else []
 
 

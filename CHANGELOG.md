@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**The commands that read the profile give `load`'s words for a profile file they can't read** (#832, found in the review of #829's pull request). Since #829, `profile.load` words a profile file it can't read itself (`.claude/workflow/profile.toml isn't UTF-8 text`, `… isn't a file`, `… can't be read (<error>)`), but a charter change (`workflow state put` or `patch`), `workflow preview --fetch` and `workflow research` still caught `UnicodeDecodeError` and `OSError` around it and worded the error their own way, beside `load`'s.
+
+- **Changed:** those handlers are gone. A charter change now says `workflow: .claude/workflow/profile.toml isn't UTF-8 text, so the charter change can't be checked`, and `workflow research` says `…, so [sensitive].patterns can't be left out`: `load`'s words, then the command's own context, for any profile `load` refuses (a profile that isn't valid TOML included, which gets the context too now). `workflow preview --fetch` keeps its line, `load`'s words inside it.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_load_callers.py`.
+
 **A profile that isn't UTF-8, or isn't a file, is refused in one line** (#829, found in the review of #821's pull request; the unreadable-file part of #319). `profile.load` let `UnicodeDecodeError` and `OSError` through, so a `.claude/workflow/profile.toml` holding a byte that isn't UTF-8, or one that is a directory, ended `workflow profile check`, `workflow ready --fetch` and `workflow state join --fetch` in a traceback, with the profile's absolute path in it.
 
 - **Refused now:** `profile.load` gives `.claude/workflow/profile.toml isn't UTF-8 text`, `.claude/workflow/profile.toml isn't a file` (a directory, or a pipe that would block the read), or `.claude/workflow/profile.toml can't be read (<error>)` for any other file it can't open, the wording `workflow status` and `workflow doctor` already gave. So `workflow profile check`, `workflow ready --fetch`, `workflow state join --fetch` and the other commands that stop on a bad profile now refuse it in one `workflow: …` line and exit 1, and `merge-check`, `preview --fetch` and the guard name the profile's mistake in those words.
