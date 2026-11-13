@@ -212,3 +212,73 @@ def test_well_typed_fields_are_read_as_before(monkeypatch, capsys, tmp_path):
     assert [(i["number"], i["detail"]) for i in st["ready"]] == [(1, "notes")]
     assert [(i["number"], i["detail"]) for i in st["specs"]] == [(3, "2 of 3 tickets open")]
     assert [(p["number"], p["detail"]) for p in st["prs"]] == [(30, "claude/build-12")]
+
+
+# #799: a parent whose `completed` count has the wrong type is still a parent.
+PARENT = {
+    "number": 1,
+    "title": "Parent",
+    "state": "open",
+    "labels": [{"name": "ready-for-agent"}],
+    "body": "Area: a\n",
+    "sub_issues_summary": {"total": 3, "completed": "1"},
+}
+BAD_COMPLETED = ["1", 1.5, True, [1]]
+
+
+def _ready_json(monkeypatch, capsys, tmp_path, issues, prs):
+    _env(monkeypatch, tmp_path)
+    (tmp_path / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
+    (tmp_path / "prs.json").write_text(json.dumps(prs), encoding="utf-8")
+    code = cli.main(["ready", "--issues", "issues.json", "--prs", "prs.json", "--json"])
+    out = capsys.readouterr()
+    assert "Traceback" not in out.err
+    assert code == 0, out.err
+    return json.loads(out.out)
+
+
+def _ready_section(text: str) -> list[str]:
+    lines = text.splitlines()
+    start = next((k for k, l in enumerate(lines) if l.startswith("Ready build tickets")), None)
+    if start is None:
+        return []
+    section = []
+    for l in lines[start + 1 :]:
+        if not l.startswith("- "):
+            break
+        section.append(l)
+    return section
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_a_parent_whose_completed_count_has_the_wrong_type_is_never_ready(monkeypatch, capsys, tmp_path, completed):
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    got = _json(monkeypatch, capsys, tmp_path, [parent], [])
+    assert 1 not in [i["number"] for i in got["ready"]]
+    text = _status(monkeypatch, capsys, tmp_path, [parent], [])
+    assert not [l for l in _ready_section(text) if l.startswith("- #1 ")]
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_such_a_parent_is_listed_as_a_parent_whose_tickets_are_unknown(monkeypatch, capsys, tmp_path, completed):
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    got = _json(monkeypatch, capsys, tmp_path, [parent], [])
+    assert [(i["number"], i["detail"]) for i in got["specs"]] == [(1, "parent issue, tickets unknown (no sub_issues_summary)")]
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_a_spec_with_such_a_summary_still_reads_tickets_unknown(monkeypatch, capsys, tmp_path, completed):
+    spec = _set(SPEC, ("sub_issues_summary", "completed"), completed)
+    got = _json(monkeypatch, capsys, tmp_path, [spec], [])
+    assert [(i["number"], i["detail"]) for i in got["specs"]] == [(3, "tickets unknown (no sub_issues_summary)")]
+
+
+@pytest.mark.parametrize("completed", BAD_COMPLETED, ids=repr)
+def test_status_and_ready_agree_on_such_a_parent(monkeypatch, capsys, tmp_path, completed):
+    parent = _set(PARENT, ("sub_issues_summary", "completed"), completed)
+    # A ready ticket beside it, so the agreement isn't only on an empty list.
+    ticket = {**copy.deepcopy(TICKET), "number": 5, "body": "Area: notes\n"}
+    issues = [parent, ticket]
+    status_ready = [i["number"] for i in _json(monkeypatch, capsys, tmp_path, issues, [])["ready"]]
+    ready_ready = [v["number"] for v in _ready_json(monkeypatch, capsys, tmp_path, issues, [])["ready"]]
+    assert status_ready == ready_ready == [5]

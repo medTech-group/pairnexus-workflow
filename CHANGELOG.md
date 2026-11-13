@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow status` never lists a parent whose `completed` count has the wrong type as a ready build ticket** (#799, found in the review of #780's pull request). `workflow status` read a `sub_issues_summary` with a count of the wrong type as missing whole (#770), so a parent issue labelled `ready-for-agent` whose summary was `{"total": 3, "completed": "1"}` read as a build ticket: `Ready build tickets: 1` / `- #1 Parent [a]`, and #1 under `ready` in `--json`. `workflow ready` reads the same item as a parent since #780, so the two disagreed.
+
+- **A parent now,** whatever the type of its `completed` (`"1"`, `1.5`, `true`, `[1]`), when its `total` is a whole number above 0: `status` reads readiness, and whether an issue is a parent, as `ready` does (`status.as_read` with `by_count`), so `status`'s `ready` list and `ready`'s hold the same numbers. It is listed with the specs and parents as `parent issue, tickets unknown (no sub_issues_summary)`.
+- **Unchanged:** a spec with such a summary still reads `tickets unknown (no sub_issues_summary)`; a summary whose `total` has the wrong type is still read as missing, by both commands.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_status_field_types.py`.
+
 **`workflow ready` and `workflow status` say standard input is already `--issues`'s when `--prs` is `-` too** (#794, found in the review of #779's pull request). With `--issues -` and `--prs -` both, `--issues` read standard input whole and `--prs` found nothing left, so `workflow ready --issues - --prs - < issues.json` (and `workflow status` the same way) printed `` workflow: can't read standard input (-): it is empty ``, exit 1, though it wasn't empty.
 
 - **Refused in one line now,** before either is read, on standard error, nothing on standard output, exit 1, with or without `--json`: `` workflow ready: --prs: standard input (-) is already --issues's: only one file can be read from it `` (`workflow status:` for `status`), the words `ready` gives `--permissions` on standard input `--prs` already read. One helper, `cli._stdin_taken_line`, gives both commands the line, and one, `cli._stdin_taken`, the words, for it, for `--permissions` and for the commands that read their files as merge-check does, so they stay alike.

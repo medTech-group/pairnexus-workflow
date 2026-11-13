@@ -207,6 +207,12 @@ def snapshot(
     if issues is None or prs is None:
         return st
     st.issues_read = True
+    # Readiness, and whether an issue is a parent, read a summary as `workflow ready`
+    # does: only its count of the wrong type left out, so a parent whose `total` is a
+    # whole number stays a parent, never a ready build ticket (#799). The sections'
+    # counts read the summary left out whole: its tickets unknown (#770).
+    counted, counted_prs = [as_read(i, by_count=True) for i in issues], [as_read(p, by_count=True) for p in prs]
+    parents = {i["number"] for i in counted if "pull_request" not in i and (_children(i) or (0,))[0]}
     issues, prs = [as_read(i) for i in issues], [as_read(p) for p in prs]
     lab = issues_mod.labels_of
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
@@ -229,7 +235,7 @@ def snapshot(
         is_spec = issues_mod.is_spec(i)
         path = item_path(body)
         # The item's own section, then held over it (#514), unless it already waits on a person (#577).
-        if is_spec or (kids and kids[0]):
+        if is_spec or (kids and kids[0]) or n in parents:
             kind = "" if is_spec else "parent issue, "
             if kids is None:
                 detail = "tickets unknown (no sub_issues_summary)"
@@ -267,7 +273,7 @@ def snapshot(
     # A ticket handed on is never ready, whichever section lists it: carrying it on isn't a fresh build.
     # Nor is a research issue, which is under way (#514).
     never_ready = {i["number"] for i in issues if "pull_request" not in i and lab(i) & {issues_mod.CARRY_ON_LABEL, issues_mod.RESEARCH_LABEL}}
-    for v in issues_mod.readiness(issues, prs, repo=repo, areas=areas, protected=protected):
+    for v in issues_mod.readiness(counted, counted_prs, repo=repo, areas=areas, protected=protected):
         if v.ready and v.number not in never_ready:
             st.ready.append(Item(v.number, v.title, v.area or ""))
     return st
