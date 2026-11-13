@@ -1,9 +1,7 @@
-"""#859: the guard's shell fallback and the profile.
+"""#859: a security problem in the guard.
 
-Where python3 is missing or failing, the guard's hook command decides with
-the shell fallback (`fallback.sh`), which reads the profile as text twice: for
-a push or a merge in an attended session, and for a session whose role isn't
-one the kit knows. Each read answers at once, whatever the profile is; an
+Where python3 is missing or failing, the guard's shell fallback (`fallback.sh`)
+reads the profile only when it is a file, else as an empty profile; an
 ordinary profile reads as before.
 
 Seam: the guard's hook command (`vendor.hook_command`) run by `sh`, an event
@@ -21,6 +19,7 @@ from changelog_notes import since_0110
 from test_guard_no_python import _kit_at, _path
 from workflow import vendor
 
+KIT = Path(__file__).resolve().parents[1]
 PROFILE = Path(".claude/workflow/profile.toml")
 SECONDS = 20
 
@@ -99,8 +98,7 @@ def test_an_attended_push_is_asked(tmp_path, make, layout, kind):
 @pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("make", MAKES)
 def test_a_role_the_kit_doesnt_know_is_refused_every_tool(tmp_path, make, kind):
-    """The profile reads as one that doesn't say only ticket sessions write
-    code, so the session stays refused, as with no profile."""
+    """Refused as with no profile."""
     p = Project(tmp_path, kind)
     make(p.proj, tmp_path)
     for event in (LS, PUSH):
@@ -131,6 +129,31 @@ def test_a_symlink_to_an_ordinary_profile_reads_as_before(tmp_path, kind):
     assert p.guard(PUSH) == "deny"
     assert p.guard(LS, "tickte") is None
     assert p.guard(PUSH, "tickte") == "deny"
+
+
+# ---------- the notes ----------
+
+WHAT_IT_DOES = "only when it is a file, else as an empty profile"
+
+
+def _words(text):
+    """`text` on one line: comment marks and line breaks left out."""
+    return " ".join(" ".join(line.strip().lstrip("#").split()) for line in text.splitlines()).strip()
+
+
+def test_the_notes_say_what_the_fix_does():
+    """The fallback's comment on the fix, its line on the architecture page and
+    this file's docstring say what the fix does, in `_open_file`'s words."""
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    (line,) = [line for line in page.splitlines() if line.startswith("- `fallback.sh`:")]
+    script = (KIT / "scripts/workflow/fallback.sh").read_text(encoding="utf-8").splitlines()
+    at = script.index('[ -f "$PROFILE_TOML" ] || PROFILE_TOML=/dev/null')
+    start = at
+    while script[start - 1].startswith("#"):
+        start -= 1
+    comment = "\n".join(script[start:at])
+    for text in (line, comment, __doc__):
+        assert WHAT_IT_DOES in _words(text), text
 
 
 # ---------- the changelog ----------
