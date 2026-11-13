@@ -147,10 +147,17 @@ def solo(root):
 
 
 def _profile_text(root):
+    """The profile's text under `root`, or None when it can't be read. Read
+    only when it is a regular file (or a symlink to one), and opened without
+    waiting: a directory or a pipe reads as a profile that can't be read."""
+    path = os.path.join(str(root), PROFILE)
     try:
-        with open(os.path.join(str(root), PROFILE), encoding="utf-8", errors="replace") as f:
+        if not os.path.isfile(path):
+            return None
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        with open(fd, encoding="utf-8", errors="replace") as f:
             return f.read()
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return None
 
 

@@ -62,11 +62,17 @@ def _branch(where):
 
 def _ticket_branch(root):
     """The profile's run.ticket_branch, or None when the kit isn't set up (the
-    CLI never takes a role from the branch without a profile)."""
+    CLI never takes a role from the branch without a profile). Read only when
+    it is a regular file (or a symlink to one), and opened without waiting: a
+    directory or a pipe reads as a profile that can't be read."""
+    path = os.path.join(root, ".claude", "workflow", "profile.toml")
     try:
-        with open(os.path.join(root, ".claude", "workflow", "profile.toml"), encoding="utf-8", errors="replace") as f:
+        if not os.path.isfile(path):
+            return None
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        with open(fd, encoding="utf-8", errors="replace") as f:
             m = _TICKET_BRANCH.search(f.read())
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return None
     return m.group(1) if m else DEFAULT_TICKET_BRANCH
 
