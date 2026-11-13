@@ -1,10 +1,8 @@
-"""#862: a security problem in terminal output.
+"""#862: a security problem in terminal output. Its details stay with the
+owner; ordinary output reads as before.
 
-`workflow adopt`'s lines on the terminal are each one plain line, whatever
-the project holds; an ordinary project's lines read as before.
-
-Seam: `workflow adopt` run through the CLI in a subprocess, on a copy of the
-starter built with Python (`test_adopt._starter`)."""
+Seam: the command through the CLI in a subprocess, on a copy of the starter
+built with Python."""
 
 import os
 import subprocess
@@ -65,6 +63,14 @@ def test_case_three_reads_as_before_for_an_ordinary_project(tmp_path):
     p = _run(copy)
     assert p.returncode == 0
     assert "Changed .github/CODEOWNERS: @old-owner → @ada" in p.stdout.splitlines()
+
+
+def test_the_note_and_this_file_name_the_area_only():
+    notes = since_0110()
+    start = notes.index("(#862")
+    note = notes[start:notes.index("\n\n**", start)]
+    for text in (note, __doc__):
+        assert "workflow adopt" not in text and "whatever" not in text
 
 
 def test_changelog_notes_it_under_unreleased():
