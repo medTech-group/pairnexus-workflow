@@ -723,7 +723,7 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
-        raise ProfileError(f"{path}: {e}") from e
+        raise ProfileError(f"{PROFILE_PATH}: {e}") from e
     return parse(data, root)
 
 

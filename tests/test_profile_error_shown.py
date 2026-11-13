@@ -155,6 +155,41 @@ def test_status_shows_the_name_escaped(tmp_path):
     assert f"unknown table [{ODD_SHOWN}];" in gaps["kit.profile"]["message"]
 
 
+# ---------- local paths ----------
+
+
+TOML_MISTAKE = "[project\n"
+ODD_FOLDERS = [pytest.param("my" + chr(0xA0) + "work", id="no-break-space"), pytest.param("my" + chr(0x200D) + "work", id="joiner")]
+
+
+def _named_in_the_project(message, root):
+    assert f"{PROFILE_PATH}: " in message
+    assert str(root) not in message and issues.escape_unprintable(str(root)) not in message
+
+
+@pytest.mark.parametrize("folder", ODD_FOLDERS)
+def test_local_paths_stay_out_of_doctors_profile_line(tmp_path, folder):
+    root = _project(tmp_path / folder, profile=TOML_MISTAKE)
+    line = _line(tmp_path, root, "kit.profile")
+    assert line["status"] == "gap"
+    _named_in_the_project(line["message"], root)
+
+
+@pytest.mark.parametrize("folder", ODD_FOLDERS)
+def test_local_paths_stay_out_of_status_profile_line(tmp_path, folder):
+    root = _project(tmp_path / folder, profile=TOML_MISTAKE)
+    gaps = {g["id"]: g for g in json.loads(_status(tmp_path, root, "--json"))["local_gaps"]}
+    _named_in_the_project(gaps["kit.profile"]["message"], root)
+
+
+def test_local_paths_stay_out_of_loads_toml_refusal(tmp_path):
+    _profile(tmp_path, "[x\n")
+    with pytest.raises(ProfileError) as e:
+        profile.load(tmp_path)
+    assert str(e.value).startswith(f"{PROFILE_PATH}: ")
+    assert str(tmp_path) not in str(e.value)
+
+
 # ---------- the changelog ----------
 
 
