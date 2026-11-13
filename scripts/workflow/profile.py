@@ -45,7 +45,16 @@ REPO_CONTROL = "project.repo must be owner/repo, without control characters"
 
 
 class ProfileError(ValueError):
-    pass
+    """A profile the kit can't use. Its message can quote the profile's own
+    text (a table's, a suite's or a package's name), so it is held through
+    `issues.escape_unprintable`, the kit's one escape for a name: a line
+    break or an escape code in it reads `\\n` or `\\u001b`, and whoever prints
+    it (`main`'s `workflow:` line, doctor's and status's `kit.profile` line)
+    shows one plain line. Escaping again changes nothing, so a caller that
+    passes its words on with its own context after them keeps them (#824)."""
+
+    def __init__(self, message: object = "") -> None:
+        super().__init__(issues_mod.escape_unprintable(str(message)))
 
 
 # Who writes code (#338): `guard.code_writers`, "ticket" (only ticket sessions)
@@ -714,7 +723,7 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
-        raise ProfileError(f"{path}: {e}") from e
+        raise ProfileError(f"{PROFILE_PATH}: {e}") from e
     return parse(data, root)
 
 

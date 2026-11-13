@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A security problem in terminal output** (#824, found in the review of #821's pull request). Fixed; its details were given to the owner.
+
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_error_shown.py`.
+
 **`profile.load` and `workflow doctor` word a file they can't read through one helper** (#836, split out of #829's pull request; covers #847's cases too). `profile.load` and doctor's two file readers (`doctor._file` and `doctor._read_text`) each kept their own check of a file they can't read, with the same words: `isn't a file`, `isn't UTF-8 text`, `can't be read (<the error's type>)`.
 
 - **Changed:** the check and its words now live once, in `profile.py`: `profile.file_problem` (a directory or a pipe isn't a file, and is never opened), `profile.read_file` (the text, through `file_problem`) and `profile.cant_be_read` (an error's words, which `profile.unreadable` gives too). `profile.load`, `doctor._file` and `doctor._read_text` read through them. `workflow doctor`'s and `workflow status`'s lines are the same for each shape of a file they read (missing, a directory, a pipe, not UTF-8, a byte-order mark, one that can't be read), and doctor still leaves a byte-order mark out where it did.
