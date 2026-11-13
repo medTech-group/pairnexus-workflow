@@ -642,23 +642,6 @@ def resolve_experience(root: Path | None, profile_value=None, environ=None) -> E
     return Experience(None, "unknown", warnings)
 
 
-def read_text(path: Path) -> tuple[str | None, str | None]:
-    """A text file's contents, and why it can't be read, in words that follow
-    the file's name: "isn't a file", "isn't UTF-8 text" or "can't be read
-    (<error>)". (None, None) when it is missing. Never raises, and never opens
-    a directory or a pipe, so never blocks."""
-    try:
-        if not path.exists():
-            return None, None
-        if not path.is_file():
-            return None, "isn't a file"
-        return path.read_text(encoding="utf-8"), None
-    except UnicodeDecodeError:
-        return None, "isn't UTF-8 text"
-    except (OSError, ValueError) as e:
-        return None, f"can't be read ({type(e).__name__})"
-
-
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
     root = root or project_root()
     path = root / PROFILE_PATH
@@ -666,9 +649,16 @@ def load(root: Path | None = None, required: bool = True) -> Profile | None:
         if required:
             raise ProfileError(f"no profile at {path}; run the setup-workflow skill first")
         return None
-    text, why = read_text(path)
-    if why:  # by its path in the project, never the absolute one (#829)
-        raise ProfileError(f"{PROFILE_PATH} {why}")
+    # Each refusal names the profile by its path in the project, never the
+    # absolute one, as `workflow status` and `workflow doctor` say it (#829).
+    try:
+        if not path.is_file():  # a directory, or a pipe that would block the read
+            raise ProfileError(f"{PROFILE_PATH} isn't a file")
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise ProfileError(f"{PROFILE_PATH} isn't UTF-8 text") from None
+    except OSError as e:
+        raise ProfileError(f"{PROFILE_PATH} can't be read ({type(e).__name__})") from None
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:

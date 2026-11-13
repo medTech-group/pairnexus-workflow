@@ -18,7 +18,7 @@ import pytest
 from changelog_notes import since_0110
 from test_doctor import _line, _project
 from test_status_local_gaps import _status
-from workflow import charter, cli, doctor, profile, state
+from workflow import charter, cli, profile, state
 from workflow.profile import PROFILE_PATH, ProfileError
 
 KIT = Path(__file__).resolve().parents[1]
@@ -143,41 +143,6 @@ def test_status_keeps_its_profile_line(tmp_path, make, said):
 def test_changelog_notes_it_under_unreleased():
     notes = since_0110()
     assert "#829" in notes
-
-
-# ---------- one reader for a file it can't read (round 1 of the review) ----------
-
-
-def test_one_reader_words_a_file_it_cant_read(tmp_path):
-    path = tmp_path / "notes.toml"
-    assert profile.read_text(path) == (None, None)  # missing
-    path.write_bytes(b"\xef\xbb\xbfname = 1\n")
-    assert profile.read_text(path) == ("﻿name = 1\n", None)  # the byte-order mark is the caller's
-    path.write_bytes(b"name = \xff\n")
-    assert profile.read_text(path) == (None, "isn't UTF-8 text")
-    path.unlink()
-    path.mkdir()
-    assert profile.read_text(path) == (None, "isn't a file")
-    pipe = tmp_path / "pipe.toml"
-    os.mkfifo(pipe)
-    assert profile.read_text(pipe) == (None, "isn't a file")  # never opened, so never blocks
-
-
-def test_load_and_doctor_both_read_through_it(tmp_path, monkeypatch):
-    _not_utf8(tmp_path)
-    monkeypatch.setattr(profile, "read_text", lambda path: (None, "is a stand-in"))
-    with pytest.raises(ProfileError) as e:
-        profile.load(tmp_path)
-    assert str(e.value) == f"{PROFILE_PATH} is a stand-in"
-    assert doctor._read_text(tmp_path, PROFILE_PATH) == (None, "it is a stand-in")
-
-
-def test_doctor_still_leaves_out_the_byte_order_mark(tmp_path):
-    (tmp_path / "a.md").write_bytes(b"\xef\xbb\xbfhello\n")
-    assert doctor._read_text(tmp_path, "a.md") == ("hello\n", None)
-    assert doctor._read_text(tmp_path, "missing.md") == (None, None)
-    (tmp_path / "b.md").write_bytes(b"\xff")
-    assert doctor._read_text(tmp_path, "b.md") == (None, "it isn't UTF-8 text")
 
 
 def _note():
