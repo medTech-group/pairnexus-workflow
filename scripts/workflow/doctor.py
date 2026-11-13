@@ -288,17 +288,10 @@ def _read_text(root: Path, rel: str | Path) -> tuple[str | None, str | None]:
     """A text file's contents (a byte-order mark left out), and why it can't
     be read: (None, None) when it is missing. Never raises, and never blocks
     on a pipe."""
-    path, err = _file(root, rel)
-    if err:
-        return None, err
-    try:
-        if not path.exists():
-            return None, None
-        return path.read_text(encoding="utf-8").removeprefix("\ufeff"), None
-    except UnicodeDecodeError:
-        return None, "it isn't UTF-8 text"
-    except (OSError, ValueError) as e:
-        return None, f"it can't be read ({type(e).__name__})"
+    text, why = profile_mod.read_text(Path(rel) if Path(rel).is_absolute() else root / rel)
+    if why:
+        return None, f"it {why}"
+    return (text.removeprefix("\ufeff") if text is not None else None), None
 
 
 def _parse_json(text: str, loads=json.loads):

@@ -8,13 +8,15 @@ state join --fetch` print one `workflow: …` line and exit 1, never a
 traceback. Seams: `profile.load`, and each command through `cli.main`."""
 
 import json
+import os
+import pathlib
 
 import pytest
 
 from changelog_notes import since_0110
 from test_doctor import _line, _project
 from test_status_local_gaps import _status
-from workflow import charter, cli, profile, state
+from workflow import charter, cli, doctor, profile, state
 from workflow.profile import PROFILE_PATH, ProfileError
 
 NOT_UTF8 = f"{PROFILE_PATH} isn't UTF-8 text"
@@ -137,3 +139,80 @@ def test_status_keeps_its_profile_line(tmp_path, make, said):
 def test_changelog_notes_it_under_unreleased():
     notes = since_0110()
     assert "#829" in notes
+
+
+# ---------- one reader for a file it can't read (round 1 of the review) ----------
+
+
+def test_one_reader_words_a_file_it_cant_read(tmp_path):
+    path = tmp_path / "notes.toml"
+    assert profile.read_text(path) == (None, None)  # missing
+    path.write_bytes(b"\xef\xbb\xbfname = 1\n")
+    assert profile.read_text(path) == ("﻿name = 1\n", None)  # the byte-order mark is the caller's
+    path.write_bytes(b"name = \xff\n")
+    assert profile.read_text(path) == (None, "isn't UTF-8 text")
+    path.unlink()
+    path.mkdir()
+    assert profile.read_text(path) == (None, "isn't a file")
+    pipe = tmp_path / "pipe.toml"
+    os.mkfifo(pipe)
+    assert profile.read_text(pipe) == (None, "isn't a file")  # never opened, so never blocks
+
+
+def test_load_and_doctor_both_read_through_it(tmp_path, monkeypatch):
+    _not_utf8(tmp_path)
+    monkeypatch.setattr(profile, "read_text", lambda path: (None, "is a stand-in"))
+    with pytest.raises(ProfileError) as e:
+        profile.load(tmp_path)
+    assert str(e.value) == f"{PROFILE_PATH} is a stand-in"
+    assert doctor._read_text(tmp_path, PROFILE_PATH) == (None, "it is a stand-in")
+
+
+def test_doctor_still_leaves_out_the_byte_order_mark(tmp_path):
+    (tmp_path / "a.md").write_bytes(b"\xef\xbb\xbfhello\n")
+    assert doctor._read_text(tmp_path, "a.md") == ("hello\n", None)
+    assert doctor._read_text(tmp_path, "missing.md") == (None, None)
+    (tmp_path / "b.md").write_bytes(b"\xff")
+    assert doctor._read_text(tmp_path, "b.md") == (None, "it isn't UTF-8 text")
+
+
+# ---------- a profile whose folder can't be searched (round 1 of the review) ----------
+
+CANT_SEARCH = f"{PROFILE_PATH} can't be read (PermissionError)"
+
+
+def _cant_search(monkeypatch):
+    """The profile's folder at mode 000, as a user other than root meets it:
+    asking whether the profile exists raises PermissionError."""
+    exists = pathlib.Path.exists
+
+    def denied(self, *a, **kw):
+        if self.name == "profile.toml":
+            raise PermissionError(13, "Permission denied", str(self))
+        return exists(self, *a, **kw)
+
+    monkeypatch.setattr(pathlib.Path, "exists", denied)
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_load_refuses_a_profile_whose_folder_cant_be_searched(tmp_path, monkeypatch, required):
+    _not_utf8(tmp_path)
+    _cant_search(monkeypatch)
+    with pytest.raises(ProfileError) as e:
+        profile.load(tmp_path, required=required)
+    assert str(e.value) == CANT_SEARCH
+    assert str(tmp_path) not in str(e.value)
+
+
+@pytest.mark.parametrize("argv", COMMANDS)
+def test_each_command_refuses_a_profile_whose_folder_cant_be_searched(tmp_path, monkeypatch, capsys, argv):
+    _not_utf8(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(cli, "_fetch", lambda *a, **kw: pytest.fail("read GitHub with a profile it can't read"))
+    args = argv(tmp_path)
+    _cant_search(monkeypatch)
+    capsys.readouterr()
+    assert cli.main(args) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and err == f"workflow: {CANT_SEARCH}\n"
+    assert "Traceback" not in err and str(tmp_path) not in err
