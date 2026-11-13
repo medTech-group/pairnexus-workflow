@@ -104,7 +104,28 @@ def escape_controls(text: str) -> str:
     override written as JSON escapes it (`\\n`, `\\u001b`), so it can't
     add a line or send an escape code; everything else, text outside ASCII
     and a lone surrogate among it, is left as it is (#776)."""
-    return _CONTROL.sub(lambda m: _NAMED.get(m.group()) or f"\\u{ord(m.group()):04x}", text)
+    return _CONTROL.sub(lambda m: _escaped(m.group()), text)
+
+
+def escape_unprintable(text: str) -> str:
+    """Text whose characters must be told apart (a check's or a file's name,
+    a value someone gave) as a terminal may show it: what `escape_controls`
+    escapes, written the same way, and every other character
+    `str.isprintable()` rejects (a format character such as an emoji's joiner
+    or a right-to-left mark, a space other than ASCII's, a lone surrogate, a
+    private-use or unassigned code point), so nothing invisible passes for
+    something else. Other text outside ASCII is left as it is (#805)."""
+    return "".join(c if c.isprintable() else _escaped(c) for c in text)
+
+
+def _escaped(c: str) -> str:
+    """One character as JSON escapes it: `\\n`, `\\r`, `\\t`, else `\\u001b`,
+    and one past U+FFFF as its surrogate pair (`\\udb40\\udc67`), so it can't
+    print as a different name."""
+    if ord(c) > 0xFFFF:
+        high, low = divmod(ord(c) - 0x10000, 0x400)
+        return f"\\u{0xD800 + high:04x}\\u{0xDC00 + low:04x}"
+    return _NAMED.get(c) or f"\\u{ord(c):04x}"
 
 
 def labels_of(issue: dict) -> set[str]:

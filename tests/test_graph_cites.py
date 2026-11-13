@@ -533,6 +533,21 @@ def test_terminal_output_shows_each_sentence_printable(root, monkeypatch, capsys
     assert got["passages"][0]["sentence"] == f"For {ODD}#12 now." and got["issues"][0]["sentence"] == f"Look {ODD} at #12 now."
 
 
+FLAG = "\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f"
+
+
+def test_terminal_output_shows_a_character_past_u_ffff_as_its_json_surrogate_pair(root, monkeypatch, capsys):
+    """A tag character (as in England's flag) prints as its JSON surrogate
+    pair, never as `\\ue0067`, which U+E006 followed by a `7` also prints (#805)."""
+    _push(root, {"docs/a.md": "Tag \U000e0067 here #12.\n"})
+    issues = [_issue(20, f"Flag {FLAG} for #12.")]
+    code, out, err = _run(monkeypatch, capsys, root, "#12", issues=issues)
+    assert code == 0, err
+    assert "    1: Tag \\udb40\\udc67 here #12." in out.splitlines(), out
+    assert "    #20 (ticket): Flag \U0001f3f4\\udb40\\udc67\\udb40\\udc62\\udb40\\udc65\\udb40\\udc6e\\udb40\\udc67\\udb40\\udc7f for #12." in out.splitlines(), out
+    assert "\\ue0067" not in out
+
+
 # ---------- GitHub's inputs ----------
 
 
