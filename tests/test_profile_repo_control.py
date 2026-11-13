@@ -85,6 +85,28 @@ def test_another_profile_error_still_lets_status_fetch_print_its_report(monkeypa
     assert gh.calls() == []
 
 
+SUITE = '[project]\nname = "demo"\nrepo = "acme/demo"\n[[commands.suite]]\nname = "{name}"\nrun = "pytest"\nfiles = ["tests/**"]\n'
+
+
+@pytest.mark.parametrize(
+    "profile_toml",
+    ["[project\nname = 'demo'\n", SUITE.format(name="unit\\nfast"), SUITE.format(name="u" * 300), '[project]\nname = "demo"\nrepo = "acme"\n'],
+    ids=["syntax-error", "multi-line-error", "long-error", "repo-without-slash"],
+)
+def test_status_fetch_s_profile_error_line_quotes_no_error(monkeypatch, capsys, tmp_path, profile_toml):
+    """Any other profile error's line is the one it was before #821: the
+    profile's error stays in doctor's kit.profile line, so the checkout's
+    path, a line break or a long name never reach this one."""
+    _project(monkeypatch, tmp_path)
+    (tmp_path / ".claude/workflow/profile.toml").write_text(profile_toml, encoding="utf-8")
+    gh = fake_gh.install(tmp_path, monkeypatch, {})
+    assert cli.main(["status", "--fetch"]) == 0
+    err = capsys.readouterr().err
+    assert err == "workflow status: the kit's profile has an error, so issues weren't read (see kit.profile)\n"
+    assert str(tmp_path) not in err
+    assert gh.calls() == []
+
+
 @CONTROLS
 def test_profile_check_names_the_same_problem(monkeypatch, capsys, tmp_path, repo_toml):
     _project(monkeypatch, tmp_path, repo_toml)

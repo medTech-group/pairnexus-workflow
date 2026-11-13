@@ -5,7 +5,7 @@
 **The profile refuses a `project.repo` holding a control character** (#821, found in the review of #792's pull request). The profile's check took any `project.repo` with one `/`, so `repo = "acme/de\u0000mo"` was taken, and `workflow status --fetch` (and `workflow ready --fetch` and `workflow state join --fetch`) ended in `ValueError: embedded null byte` when it ran `gh api` with it.
 
 - **Refused now** when the profile is read, in one line worded like the existing one: `project.repo must be owner/repo, without control characters`, for a NUL or any other control character (Unicode's Cc: U+0000 to U+001F, U+007F to U+009F; a newline or a tab among them). `workflow profile check`, `workflow status --fetch`, `workflow ready --fetch` and `workflow state join --fetch` print it as `workflow: project.repo must be owner/repo, without control characters`, exit 1, with nothing on standard output; no command reaches `gh` with it.
-- **`workflow status --fetch`** with any other profile error is as before: it reads no issues and still prints its report, exit 0, and its one line on standard error now names the profile's error, escaped and cut to 200 characters.
+- **`workflow status --fetch`** with any other profile error is unchanged: it reads no issues, says so in its one line on standard error and still prints its report, exit 0.
 - **Unchanged:** an ordinary repo is taken, and so is one with a character that isn't a control character, such as a backtick or U+202E (#792 shows those escaped when `gh api` fails). The rest of the `owner/name` rule is #327's.
 - **For projects updating:** nothing to do, unless your `project.repo` holds a control character. `VERSION` is unchanged. Tests: `tests/test_profile_repo_control.py`.
 
