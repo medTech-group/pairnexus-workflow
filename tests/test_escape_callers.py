@@ -224,3 +224,16 @@ def test_the_changelog_note_says_whose_text_printed_a_character_past_u_ffff_as_a
     assert clash.startswith("Doctor's text") and "merge-check" not in clash.lower(), clash
     merge = next(s for s in sentences if s.startswith("Merge-check's text"))
     assert "only a format character past U+FFFF" in merge, merge
+
+
+def test_the_changelog_note_names_workflow_graphs_text():
+    """`workflow graph`'s text shows each cited sentence through
+    `doctor._printable`, so a tag character in it changes as doctor's text
+    does: the note names it, in that item and in the unchanged line."""
+    note = entry("#805, found in the review of #776's pull request")
+    item = _past_u_ffff_item(note)
+    assert "`workflow graph`'s" in item.split(":**")[0], item
+    clash = next(s for s in item.split(". ") if "U+E006 followed by a `7`" in s)
+    assert "`workflow graph`'s cited sentences" in clash, clash
+    unchanged = next(l for l in note.splitlines() if l.startswith("- **Unchanged:**"))
+    assert "`workflow graph`'s" in unchanged and "all three" not in unchanged, unchanged
