@@ -14,7 +14,7 @@ import subprocess
 
 import pytest
 
-from changelog_notes import entry, since_0110
+from changelog_notes import KIT, entry, since_0110
 from test_guard_833 import GIT
 from test_guard_863 import VALID, _as_anyone, _project, shape  # noqa: F401 (shape is a fixture)
 from test_guard_no_python import _bash, _decision
@@ -95,8 +95,7 @@ def _workflow_linked_to_itself(root, locked):
 
 @pytest.fixture
 def linked(tmp_path):
-    """A project whose kit is reached through a link in the given layout, put
-    back after the test."""
+    """A project in the given layout, put back after the test."""
     locked = tmp_path / "locked"
     locked.mkdir()
 
@@ -111,17 +110,18 @@ def linked(tmp_path):
 
 
 @pytest.mark.parametrize("layout", [_workflow_linked_into_a_locked_folder, _cli_linked_into_a_locked_folder,
-                                    _claude_linked_into_a_locked_folder, _workflow_linked_to_itself])
-def test_a_kit_reached_through_a_link_that_cant_be_followed_is_refused_on_a_ticket_branch(linked, layout):
+                                    _claude_linked_into_a_locked_folder, _workflow_linked_to_itself],
+                         ids=["1", "2", "3", "4"])
+def test_on_a_ticket_branch_every_tool_is_refused_in_each_layout(linked, layout):
     root = linked("claude/build-1", layout)
     assert _guard(root, PUSH) == "deny"
     assert _guard(root, EDIT) == "deny"
 
 
-@pytest.mark.parametrize("folder, mode", [(".", 0), (".", 0o644), (".", 0o600), ("..", 0)])
+@pytest.mark.parametrize("folder, mode", [(".", 0), (".", 0o644), (".", 0o600), ("..", 0)],
+                         ids=["1", "2", "3", "4"])
 @pytest.mark.parametrize("branch", ["claude/build-1", "main"])
-def test_a_project_folder_that_cant_be_searched_is_refused(shape, folder, mode, branch):
-    """Its branch can't be read either, so every branch is refused."""
+def test_every_tool_is_refused_on_every_branch_in_each_project_shape(shape, folder, mode, branch):
     root = shape(branch, folder, mode, profile=NAMED, kit=True)
     for event in (PUSH, EDIT, _bash("gh pr merge 12 --merge")):
         assert _guard(root, event, cwd="/") == "deny", event
@@ -213,3 +213,17 @@ def test_the_hook_command_builds_its_decisions_through_the_shared_builder():
 
     assert "hookSpecificOutput" not in inspect.getsource(vendor.hook_command)
     assert "_old_python._decision" in inspect.getsource(vendor.hook_command)
+
+
+# ---------- the wording ----------
+
+
+def test_the_guards_own_lines_name_it_by_its_area_only():
+    """The hook command's code and its page line state what they do, with no
+    ticket number on them."""
+    import inspect
+
+    assert "#872" not in inspect.getsource(vendor)
+    page = (KIT / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8").splitlines()
+    (line,) = [line for line in page if line.startswith("- `vendor.hook_command`:")]
+    assert "#872" not in line

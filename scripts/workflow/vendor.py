@@ -102,7 +102,7 @@ NO_PYTHON_REASON = (
     "python3 .claude/workflow/bin/workflow.py profile check, then start a new session"
 )
 UNREADABLE_KIT_REASON = (
-    "the workflow kit is in this checkout but cannot be read, so nothing can be checked; make .claude/workflow "
+    "the workflow kit is in this checkout but cannot be read, so nothing can be checked; make the kit "
     "readable again, then start a new session"
 )
 # All three go into single-quoted sh strings.
@@ -140,7 +140,7 @@ _PLANNING = (
 )
 # The CLI not found because the deepest part of its path that is there is a
 # folder that can't be searched or a link that can't be followed is not a
-# missing kit (#872): U says so, and the hook then refuses every tool to a
+# missing kit: U says so, and the hook then refuses every tool to a
 # ticket or conductor session (with WORKFLOW_ROLE unset, a branch matching
 # run.ticket_branch as _BRANCH reads it, or a branch that can't be read) and
 # asks about every tool otherwise, without the planning fallback. A path that
@@ -199,11 +199,12 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     isn't a role, gets that fallback too, as a planning session. An
     attended session's guard always exits 0. SessionStart says so to everyone
     (#22).
-    With the kit there but unreadable, so that the CLI isn't found (#872), the
-    guard refuses every tool to a ticket or conductor session (with
-    WORKFLOW_ROLE unset, a branch matching the default run.ticket_branch) and
-    asks about every tool otherwise; it never reads as a missing kit. The CLI itself exits 0 whenever it has decided, so a non-zero exit
-    means it couldn't.
+    With the kit there but unreadable, so that the CLI isn't found, the guard
+    refuses every tool to a ticket or conductor session (with WORKFLOW_ROLE
+    unset, a branch matching run.ticket_branch, or one that can't be read) and
+    asks about every tool otherwise; it never reads as a missing kit. The CLI
+    itself exits 0 whenever it has decided, so a non-zero exit means it
+    couldn't.
 
     The plugin is for attended work only: without a working python3 its guard
     never refuses every tool, and runs the fallback whatever WORKFLOW_ROLE
