@@ -1,3 +1,4 @@
+Covers: scripts/workflow/_old_python.py
 Covers: scripts/workflow/cli.py
 Covers: scripts/workflow/evidence.py
 Covers: scripts/workflow/fetch.py
@@ -54,6 +55,8 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `unreadable`: in `profile.py`, `load`'s refusal of a profile file an `OSError` stops it reading, `.claude/workflow/profile.toml` and `cant_be_read`'s words; `cli._load` gives it (#832).
 - `ProfileError`: in `profile.py`, the error for a profile the kit can't use. It holds its message through `issues.escape_unprintable`, so the profile's own text it quotes (a table's, a suite's or a package's name) reads escaped wherever it is printed: `main`'s `workflow:` line, doctor's and status's `kit.profile` line. A caller raising one gives its text as it is, keeping no escape of its own, and one that passes another's words on with its own context after them keeps them, since escaping again changes nothing (#824).
 - `_load`: in `cli.py`, `load`, with the `OSError` it still lets through from asking whether the profile exists (a folder that can't be searched, a path too long) refused in `unreadable`'s words, so its callers catch `ProfileError` alone: a charter change, `preview --fetch`, `research`, `merge-check` and `review-record`. Until #837 moves that question inside `load` (#832).
+- `_profile_text`: in `_old_python.py`, the profile's text read without the kit: None with no profile, "" when it is there but can't be read, a byte-order mark left out. `_ticket_branch` and doctor's `_overview_unlisted` read through it.
+- `_open_file`: in `_old_python.py`, a path opened as `open` opens it, or None when it isn't a file; `_experience_file` and `_profile_text` read through it.
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Rules
