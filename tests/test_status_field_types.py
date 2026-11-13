@@ -176,6 +176,18 @@ def test_the_architecture_line_says_a_summary_with_a_bad_count_is_left_out_whole
     assert "a sub-issue or dependency summary whose count isn't a whole number, left out whole" in line
 
 
+def test_the_799_notes_claim_parity_only_on_parents():
+    """`status` leaves out carried-on tickets that `ready` lists, so #799's
+    lines say only that a parent is ready in neither, as `ready` reads it."""
+    page = (Path(__file__).resolve().parents[1] / "docs/architecture/scripts--workflow.md").read_text(encoding="utf-8")
+    line = next(l for l in page.splitlines() if l.startswith("- `as_read`:"))
+    note = entry("#799, found in the review of #780's pull request")
+    assert "list the same ready tickets" not in line
+    assert "hold the same numbers" not in note
+    for text in (line, note):
+        assert "so a parent is never a ready ticket in either, as `ready` reads it" in text
+
+
 PR_CASES = [
     # The ticket's own cases.
     (("head",), "main", ("head",)),
