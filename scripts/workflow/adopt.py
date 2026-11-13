@@ -25,6 +25,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import issues as issues_mod
 from .profile import _FENCE, PROFILE_PATH, ProfileError, parse
 
 # Where GitHub looks for CODEOWNERS, in its order: it reads the first it finds.
@@ -48,7 +49,13 @@ BOM = "\ufeff"
 
 
 class AdoptError(ValueError):
-    pass
+    """A refusal, in words. Its message can quote the project's own text, so
+    it is held through `issues.escape_unprintable`, as `ProfileError`'s is,
+    and the `workflow adopt:` line prints as one plain line. Escaping again
+    changes nothing (#862)."""
+
+    def __init__(self, message: object = "") -> None:
+        super().__init__(issues_mod.escape_unprintable(str(message)))
 
 
 @dataclass
@@ -80,11 +87,13 @@ class Result:
             self.writes[rel] = ((BOM if rel in self.boms else "") + new).encode("utf-8")
 
     def text(self) -> str:
+        """What changed and the notes, a line each, each escaped as
+        `AdoptError`'s message is (#862)."""
         lines = [f"Changed {path}: {what}" for path, what in self.changed]
         lines += self.notes
         if not self.changed:
             lines.append("Already yours: nothing to change.")
-        return "\n".join(lines)
+        return "\n".join(issues_mod.escape_unprintable(line) for line in lines)
 
 
 # Letters NFKD doesn't break into an ASCII letter and an accent, spelled out.

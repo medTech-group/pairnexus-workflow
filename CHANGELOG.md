@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**A security problem in terminal output** (#862, found in the review of #824's pull request). Fixed; its details were given to the owner.
+
+- **Unchanged:** an ordinary project's `workflow adopt` lines read as before.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_adopt_862.py`.
+
 **A security problem in terminal output** (#856, found in the review of #824's pull request). Fixed; its details were given to the owner.
 
 - **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_warnings_shown.py`.
