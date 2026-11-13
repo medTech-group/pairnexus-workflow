@@ -262,8 +262,8 @@ def test_doctors_line_for_each_shape(tmp_path, rel, shape):
 
 
 # `workflow status` with a lock.json that is a pipe blocks before its report
-# (`updates.installed` opens the lock unchecked, on the base too): filed as
-# its own ticket, outside the three readers this one moves.
+# (`updates.installed` opens the lock unchecked, on the base too): #850,
+# outside the three readers this one moves.
 STATUS_CASES = [c for c in CASES if c.values != (LOCK, "a-pipe")]
 
 
