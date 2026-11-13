@@ -466,14 +466,16 @@ def cmd_ready(a) -> int:
         # control character in one is shown as its escape, so each ticket stays
         # on its own line (#797). Then each line through `escape_surrogates`: a
         # lone surrogate is shown as its escape, never a traceback (#785).
+        # Each line printed through `_print_text`: a character the output's
+        # encoding can't take is written as its backslash escape (#802).
         esc, ctl = issues_mod.escape_surrogates, issues_mod.escape_controls
         for v in verdicts:
             mark = "READY" if v.ready else "wait "
             why = "" if v.ready else " — " + "; ".join(ctl(r) for r in v.reasons)
-            print(esc(f"{mark} #{v.number} [{ctl(v.area or '-')}] {ctl(v.title)}{why}"))
+            _print_text(esc(f"{mark} #{v.number} [{ctl(v.area or '-')}] {ctl(v.title)}{why}"))
             for note in v.notes:
-                print(esc(f"      note: {ctl(note)}"))
-        print("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
+                _print_text(esc(f"      note: {ctl(note)}"))
+        _print_text("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
     return 0
 
 
