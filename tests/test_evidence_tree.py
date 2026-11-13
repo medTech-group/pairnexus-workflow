@@ -56,8 +56,8 @@ def _repo(tmp_path, run="python3 run_tests.py {files}", repair=""):
     git(tmp_path, "config", "user.email", "t@e")
     git(tmp_path, "config", "user.name", "t")
     # No automatic maintenance: newer git (2.56 in CI) runs it detached after
-    # a commit, and its lock in .git/objects can come and go mid-test (a
-    # `shutil.rmtree` of `.git` then fails on a file already gone).
+    # a commit, and its lock in .git/objects can come and go mid-test (a test
+    # that removes .git then fails on a file that vanished as it was deleted).
     git(tmp_path, "config", "maintenance.auto", "false")
     git(tmp_path, "config", "gc.auto", "0")
     git(tmp_path, "add", ".")
