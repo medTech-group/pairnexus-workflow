@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**A security problem in the guard is fixed** (#859, found in the review of #833's pull request). Its details stay with the owner.
+
+- **Unchanged:** an ordinary profile reads as before.
+- **For projects updating:** nothing to do; the fix reaches a project with the kit's next update. `VERSION` is unchanged. Tests: `tests/test_guard_859.py`.
+
 **A security problem in the guard is fixed** (#833; #851 was its duplicate). Its details stay with the owner.
 
 - **Unchanged:** an ordinary profile reads as before.

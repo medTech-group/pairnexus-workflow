@@ -1,6 +1,7 @@
 Covers: scripts/workflow/_old_python.py
 Covers: scripts/workflow/cli.py
 Covers: scripts/workflow/evidence.py
+Covers: scripts/workflow/fallback.sh
 Covers: scripts/workflow/graph.py
 Covers: scripts/workflow/issues.py
 Covers: scripts/workflow/proc.py
@@ -58,6 +59,8 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Rules
+
+- `fallback.sh`: the guard's fallback without Python reads the profile only through `PROFILE_TOML`, which it sets once, to `/dev/null` when the profile isn't a regular file (or a symlink to one), so each of its reads (`plain` and `solo`) reads such a profile as an empty one, like a missing one, as `_open_file` does for the old-Python path; a new read of the profile there goes through `PROFILE_TOML` too (#859).
 
 - `evidence.py`: a run keeps a shard's result as the commit's only after checking, once the shard has ended, the working tree and then that HEAD hasn't moved. A moved head stops the run with nothing kept for that shard, so a later run on the commit runs it again (#671). A tracked or staged path changed since the last look (`tree_state`, inside submodules too, the repair's window included), or with `--allow-dirty` an untracked file that appeared or a file created or removed in a folder that isn't ignored (an ignored file too, even one gone again), makes the run a dirty one: it goes on, keeps that shard and every later one under `<sha>-dirty`, and its report carries the dirty marker. Untracked files that appear without `--allow-dirty` are left be (#704). The base branch's worktree, fresh from git, isn't checked at all (#703).
 
