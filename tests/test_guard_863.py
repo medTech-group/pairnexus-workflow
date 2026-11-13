@@ -18,7 +18,8 @@ import pytest
 
 from changelog_notes import since_0110
 from test_guard_833 import GIT, LS, PUSH, _argv
-from workflow import _old_python, cli
+from test_guard_no_python import _kit_at
+from workflow import _old_python, cli, vendor
 from workflow.profile import ProfileError, load
 
 KIT = Path(__file__).resolve().parents[1]
@@ -33,14 +34,19 @@ def _as_anyone(argv):
     return (["unshare", "-U"] + argv) if os.geteuid() == 0 else argv
 
 
-def _project(tmp_path, branch):
+def _project(tmp_path, branch, profile=VALID, kit=False):
+    """A git project on `branch`, with `profile` as its profile (None: no
+    `.claude` at all) and with `kit` the kit's CLI too."""
     root = tmp_path / "proj"
     subprocess.run(GIT + ["init", "-q", "-b", "main", str(root)], check=True)
     subprocess.run(GIT + ["-C", str(root), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
     if branch != "main":
         subprocess.run(GIT + ["-C", str(root), "checkout", "-q", "-b", branch], check=True)
-    (root / PROFILE).parent.mkdir(parents=True)
-    (root / PROFILE).write_text(VALID, encoding="utf-8")
+    if kit:
+        _kit_at(root / vendor.HOOK_TAG)
+    if profile is not None:
+        (root / PROFILE).parent.mkdir(parents=True, exist_ok=True)
+        (root / PROFILE).write_text(profile, encoding="utf-8")
     return root
 
 
@@ -49,10 +55,10 @@ def shape(tmp_path):
     """A project in the shape the tests below need, put back after the test."""
     made = []
 
-    def make(branch):
-        root = _project(tmp_path, branch)
-        os.chmod(root / PROFILE.parent, 0)
-        made.append(root / PROFILE.parent)
+    def make(branch, folder=PROFILE.parent, mode=0, **project):
+        root = _project(tmp_path, branch, **project)
+        os.chmod(root / folder, mode)
+        made.append(root / folder)
         return root
 
     yield make
