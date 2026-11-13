@@ -603,10 +603,10 @@ def _read_profile(root: Path):
     """(the profile, None), or (None, `profile check`'s error) for one that
     can't be used, as doctor reads it; (None, None) with no profile."""
     try:
-        return _load(root, required=False), None  # `load` words a file it can't read (#829)
+        return load(root, required=False), None  # `load` words a file it can't read (#829)
     except ProfileError as e:
         return None, str(e)
-    except ValueError as e:  # tomllib's own, beside TOMLDecodeError: an integer too long to read
+    except (OSError, ValueError) as e:
         return None, f"{PROFILE_PATH} can't be read ({type(e).__name__})"
 
 

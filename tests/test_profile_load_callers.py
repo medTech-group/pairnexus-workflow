@@ -5,12 +5,13 @@ Since #829, `profile.load` refuses a profile file it can't read with a
 `ProfileError` in its own words (`… isn't UTF-8 text`, `… isn't a file`,
 `… can't be read (<error>)`). Its callers in `cli.py` pass those words on,
 with their own context after them where they keep one: a charter change
-(`state put`), `preview --fetch`, `research`, `merge-check`, `review-record`,
-`status` and `doctor`. Those read the profile through `cli._load`, which
-refuses the `OSError` `load` still lets through (#837) in the same words.
-Seams: each command through `cli.main` (`review-record`'s hashes and
-`_read_profile` called directly), `cli.py`'s source for the handlers around
-`load`, and the architecture page's lines."""
+(`state put`), `preview --fetch`, `research`, `merge-check` and
+`review-record`. Those read the profile through `cli._load`, which refuses the
+`OSError` `load` still lets through (#837) in the same words. `status` and
+`doctor` (`cli._read_profile`) are #848's.
+Seams: each command through `cli.main` (`review-record`'s hashes called
+directly), `cli.py`'s source for the handlers around `load`, and the
+architecture page's lines."""
 
 import argparse
 import ast
@@ -138,8 +139,11 @@ def test_no_handler_around_load_catches_the_read_errors_load_words():
     own words, and `_load` refuses the `OSError` it still lets through in the
     same words: any other caller in `cli.py` that catches `UnicodeDecodeError`
     or `OSError` around them keeps a second wording of its own. `_page_profile`
-    words nothing: it renders the page without a profile."""
+    words nothing: it renders the page without a profile. `_read_profile`
+    (`status`, `doctor`) still keeps its own wording: #848 is its ticket."""
     for name, t in _tries_around_load():
+        if name == "_read_profile":  # #848
+            continue
         for h in t.handlers:
             caught = _caught(h) if h.type is not None else {"BaseException"}
             assert "UnicodeDecodeError" not in caught, (name, h.lineno, caught)
@@ -182,34 +186,6 @@ def test_review_records_hashes_note_gives_loads_words(tmp_path, capsys, said):
     assert str(tmp_path) not in err
 
 
-def test_status_and_doctor_read_it_in_loads_words(said):
-    from workflow.profile import project_root
-
-    assert cli._read_profile(project_root()) == (None, said)
-
-
-# `tomllib` refuses an integer longer than Python's limit on digits (4300)
-# with a plain `ValueError`, not a `TOMLDecodeError`: `load` lets it through,
-# and status and doctor still name it as they did before #832.
-HUGE_INTEGER = '[project]\nname = "demo"\nrepo = "acme/demo"\n[run]\nmax_parallel = ' + "1" * 4301 + "\n"
-CANT_READ_VALUE = f"{PROFILE_PATH} can't be read (ValueError)"
-
-
-def test_status_and_doctor_name_a_profile_tomllib_refuses_with_a_value_error(tmp_path):
-    from test_doctor import _line, _project
-    from test_status_local_gaps import _status
-
-    root = _project(tmp_path, profile=HUGE_INTEGER)
-    assert cli._read_profile(root) == (None, CANT_READ_VALUE)
-    gap = f"The kit's profile ({PROFILE_PATH}, its settings for this project) has a mistake, so the kit can't use it: {CANT_READ_VALUE}."
-    line = _line(tmp_path, root, "kit.profile")
-    assert (line["status"], line["message"]) == ("gap", gap)
-    report = json.loads(_status(tmp_path, root, "--json"))
-    assert report["profile_error"] is True
-    assert {g["id"]: g for g in report["local_gaps"]}["kit.profile"]["message"] == gap
-    assert "Kit: set up, but its profile has an error (kit.profile)" in _status(tmp_path, root)
-
-
 # Each caller that reads the profile through `_load`, as the page's `_load` line names it.
 THROUGH_LOAD = {
     "_charter_change_problems": "a charter change",
@@ -218,7 +194,6 @@ THROUGH_LOAD = {
     "cmd_merge_check": "`merge-check`",
     "_own_hashes": "`review-record`",
     "_measure": "`review-record`",
-    "_read_profile": "`cli._read_profile` (`status`, `doctor`)",
 }
 
 
