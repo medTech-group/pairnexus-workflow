@@ -282,3 +282,22 @@ def test_status_and_ready_agree_on_such_a_parent(monkeypatch, capsys, tmp_path, 
     status_ready = [i["number"] for i in _json(monkeypatch, capsys, tmp_path, issues, [])["ready"]]
     ready_ready = [v["number"] for v in _ready_json(monkeypatch, capsys, tmp_path, issues, [])["ready"]]
     assert status_ready == ready_ready == [5]
+
+
+# A `total` of 0 or below is no parent, whatever `completed` holds: `issues.is_build_ticket`
+# needs `total > 0`, so `ready` lists the issue, and `status` lists it as ready only.
+NOT_PARENT_SUMMARIES = [{"total": -1, "completed": "1"}, {"total": -2, "completed": 0}, {"total": 0, "completed": "1"}]
+
+
+@pytest.mark.parametrize("summary", NOT_PARENT_SUMMARIES, ids=repr)
+def test_an_issue_whose_total_is_not_above_0_is_never_a_parent(monkeypatch, capsys, tmp_path, summary):
+    issue = {**copy.deepcopy(PARENT), "sub_issues_summary": summary}
+    ticket = {**copy.deepcopy(TICKET), "number": 5, "body": "Area: notes\n"}
+    got = _json(monkeypatch, capsys, tmp_path, [issue, ticket], [])
+    assert got["specs"] == []
+    assert [i["number"] for i in got["ready"]] == [1, 5]
+    ready_ready = [v["number"] for v in _ready_json(monkeypatch, capsys, tmp_path, [issue, ticket], [])["ready"]]
+    assert ready_ready == [1, 5]
+    text = _status(monkeypatch, capsys, tmp_path, [issue, ticket], [])
+    assert "parent issue" not in text
+    assert [l for l in _ready_section(text) if l.startswith("- #1 ")] == ["- #1 Parent [a]"]
