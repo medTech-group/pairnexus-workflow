@@ -28,9 +28,10 @@ NOT_UTF8 = f"{PROFILE_PATH} isn't UTF-8 text"
 NOT_A_FILE = f"{PROFILE_PATH} isn't a file"
 
 
-def _not_utf8(root):
+def _not_utf8(root, more=b""):
+    """A profile holding a byte that isn't UTF-8, with `more` (more tables) after it."""
     (root / PROFILE_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (root / PROFILE_PATH).write_bytes(b'[project]\nname = "demo"\nrepo = "acme/d\xffmo"\nbase_branch = "main"\n')
+    (root / PROFILE_PATH).write_bytes(b'[project]\nname = "demo"\nrepo = "acme/d\xffmo"\nbase_branch = "main"\n' + more)
 
 
 def _a_directory(root):

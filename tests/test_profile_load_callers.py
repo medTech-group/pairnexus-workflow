@@ -16,24 +16,14 @@ import pytest
 
 import fake_gh
 from changelog_notes import since_0110
+from test_profile_unreadable import NOT_UTF8, _not_utf8
 from workflow import charter, cli, state
-from workflow.profile import PROFILE_PATH
 
 KIT = Path(__file__).resolve().parents[1]
 
-NOT_UTF8 = f"{PROFILE_PATH} isn't UTF-8 text"
-
-
-def _not_utf8(root):
-    (root / PROFILE_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (root / PROFILE_PATH).write_bytes(
-        b'[project]\nname = "demo"\nrepo = "acme/d\xffmo"\nbase_branch = "main"\n'
-        b'[sensitive]\npatterns = ["secret-[0-9]+"]\n'
-    )
-
 
 def _here(tmp_path, monkeypatch, capsys):
-    _not_utf8(tmp_path)
+    _not_utf8(tmp_path, b'[sensitive]\npatterns = ["secret-[0-9]+"]\n')
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     capsys.readouterr()
