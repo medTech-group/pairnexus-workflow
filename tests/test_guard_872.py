@@ -18,7 +18,7 @@ from changelog_notes import entry, since_0110
 from test_guard_833 import GIT
 from test_guard_863 import VALID, _as_anyone, _project, shape  # noqa: F401 (shape is a fixture)
 from test_guard_no_python import _bash, _decision
-from workflow import vendor
+from workflow import _old_python, vendor
 
 SECONDS = 20
 PUSH = _bash("git push origin main")
@@ -136,6 +136,32 @@ def test_a_kit_path_that_is_a_file_reads_as_not_set_up(tmp_path, make):
     make(root)
     assert _guard(root, PUSH) is None
     assert _guard(root, PUSH, "ticket") == "deny"
+
+
+@pytest.mark.parametrize("pattern, branch, wanted", [
+    ("work/*", "work/1", "deny"), ("feature/t-*", "feature/t-1", "deny"),
+    ("feature/t-*", "claude/build-1", "ask"),
+])
+def test_a_readable_profile_s_ticket_branch_decides(shape, pattern, branch, wanted):
+    """The profile's own `run.ticket_branch`, when it can be read, as in an
+    ordinary project."""
+    profile = NAMED.replace('"claude/build-*"', f'"{pattern}"')
+    root = shape(branch, ".claude/workflow/bin", profile=profile, kit=True)
+    assert _guard(root, PUSH) == wanted
+
+
+def test_a_ticket_branch_stays_refused_under_the_ticket_rule(linked):
+    """The planning fallback (`code_writers = "ticket"`) never makes such a
+    ticket branch an attended session."""
+    root = linked("claude/build-1", _cli_linked_into_a_locked_folder)
+    profile = root / ".claude/workflow/profile.toml"
+    profile.write_text(profile.read_text(encoding="utf-8") + 'code_writers = "ticket"\n', encoding="utf-8")
+    assert _guard(root, PUSH) == "deny"
+
+
+def test_the_default_ticket_branch_is_the_old_python_one():
+    assert f"${{T:-{_old_python.DEFAULT_TICKET_BRANCH}}}" in vendor.hook_command("guard")
+    assert "claude/build-*" not in vendor.hook_command("guard").replace(_old_python.DEFAULT_TICKET_BRANCH, "")
 
 
 def test_a_detached_head_is_asked(shape):
