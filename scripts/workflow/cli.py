@@ -519,7 +519,7 @@ def _status(a) -> int:
     issues = prs = None
     if a.fetch:
         if error:
-            print("workflow status: the kit's profile has an error, so issues weren't read (see kit.profile)", file=sys.stderr)
+            print(f"workflow status: the kit's profile has an error ({reviews_mod._shown(error, 200)}), so issues weren't read (see kit.profile)", file=sys.stderr)
         elif not prof:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
