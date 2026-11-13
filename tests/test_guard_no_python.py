@@ -105,11 +105,11 @@ class Setup:
         self.env = {"PATH": _path(tmp_path, kind), "CLAUDE_PROJECT_DIR": str(self.proj),
                     "CLAUDE_PLUGIN_ROOT": str(plugin), "WORKFLOW_ROLE": "attended"}
 
-    def run(self, sub, event, **env):
+    def run(self, sub, event, timeout=None, **env):
         cmd = vendor.hook_command(sub, plugin=self.layout == "plugin")
         stdin = event if isinstance(event, str) else json.dumps(event)
         return subprocess.run([shutil.which("sh"), "-c", cmd], input=stdin, capture_output=True, text=True,
-                              env={**self.env, **env}, cwd=self.proj)
+                              env={**self.env, **env}, cwd=self.proj, timeout=timeout)
 
 
 def _decision(p):

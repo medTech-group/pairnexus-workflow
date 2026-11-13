@@ -31,6 +31,10 @@
 # not the exit status, since a fallback.sh from before #342 exits 0 here too.
 
 PROFILE_TOML="${CLAUDE_PROJECT_DIR:-.}/.claude/workflow/profile.toml"
+# Every read of the profile goes through PROFILE_TOML, which reads it
+# only when it is a file, else as an empty profile, as `_old_python._open_file`
+# does (#859).
+[ -f "$PROFILE_TOML" ] || PROFILE_TOML=/dev/null
 export PROFILE_TOML
 if [ "${1:-}" = --ticket-rule ]; then
     # A profile on stdin: "ticket" when a plain line says so, else "base <its first plain base_branch>".
