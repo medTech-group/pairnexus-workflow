@@ -10,6 +10,7 @@ Covers: scripts/workflow/proc.py
 Covers: scripts/workflow/profile.py
 Covers: scripts/workflow/research.py
 Covers: scripts/workflow/status.py
+Covers: scripts/workflow/vendor.py
 
 Interface: `proc.run(argv, *, cwd=None, env=None, timeout, stderr=False) -> Done` and `proc.output(argv, *, cwd=None, timeout) -> str | None`; `graph.parse_id(text) -> Id` (raises `BadId`), `graph.cites(root, base, ids, issues, prs, *, repo, sensitive, note) -> (results, unread)` (the issues and pull requests as lists of objects, their pages flattened; raises `GraphError`), each result's `as_dict()` the spec's `--json` object, and `graph.text(results, notes) -> str`.
 
@@ -61,11 +62,15 @@ A small page: only the lines changes have written so far. The rest of the folder
 - `_profile_text`: in `_old_python.py`, the profile's text read without the kit: None with no profile, "" when it is there but can't be read, a byte-order mark left out. It asks whether the profile is there through `missing`. `_ticket_branch` and doctor's `_overview_unlisted` read through it.
 - `missing`: in `_old_python.py`, whether a path isn't there: True for an error saying so (`NOT_FOUND`: ENOENT, ENOTDIR, ELOOP) or a path that can't name a file, False when it is there, any other `OSError` raised, as a path that is there but can't be read. The one copy of the check, in Python 3.7's syntax so both paths read it: `profile.py` gives it on as `profile.missing`, and `load`, `cli._cant_decide` and `_profile_text` ask whether the profile is there through it.
 - `_open_file`: in `_old_python.py`, a path opened as `open` opens it, or None when it isn't a file; `_experience_file` and `_profile_text` read through it.
+- `_decision`: in `_old_python.py`, the guard's PreToolUse decision object; `vendor.hook_command` builds its printed decisions through it.
+- `DEFAULT_TICKET_BRANCH`: in `_old_python.py`, `run.ticket_branch`'s default; the hook command's branch match falls back to it.
 - `unnameable`: in `research.py`, why no key-source line could name a link (a space, a line break, a control character, `<` or `>`), else None. `ascii_link` and `link_problem` both refuse such a link with it.
 
 ## Rules
 
 - `fallback.sh`: the guard's fallback without Python reads the profile only through `PROFILE_TOML`, set once, which reads it only when it is a file, else as an empty profile, as `_open_file` does for the old-Python path; a new read of the profile there goes through `PROFILE_TOML` too (#859).
+
+- `vendor.hook_command`: the guard's hook command tells a kit that is there but can't be read from a missing one (`_UNREADABLE`), and the first never reads as "not set up": a session that may be a ticket or conductor session is refused, any other is asked. A new check there of whether the kit is there keeps the two apart too.
 
 - `evidence.py`: a run keeps a shard's result as the commit's only after checking, once the shard has ended, the working tree and then that HEAD hasn't moved. A moved head stops the run with nothing kept for that shard, so a later run on the commit runs it again (#671). A tracked or staged path changed since the last look (`tree_state`, inside submodules too, the repair's window included), or with `--allow-dirty` an untracked file that appeared or a file created or removed in a folder that isn't ignored (an ignored file too, even one gone again), makes the run a dirty one: it goes on, keeps that shard and every later one under `<sha>-dirty`, and its report carries the dirty marker. Untracked files that appear without `--allow-dirty` are left be (#704). The base branch's worktree, fresh from git, isn't checked at all (#703).
 

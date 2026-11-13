@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**A security problem in the guard is fixed** (#872, found in the review of #863's pull request). Its details stay with the owner.
+
+- **Unchanged:** a project without the kit still reads as "not set up", and an ordinary project is guarded as before.
+- **For projects updating:** nothing to do; the fix reaches a project with the kit's next update. `VERSION` is unchanged. Tests: `tests/test_guard_872.py`.
+
 **A security problem in terminal output** (#862, found in the review of #824's pull request). Fixed; its details were given to the owner.
 
 - **Unchanged:** ordinary output reads as before.
