@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**A security problem in terminal output** (#856, found in the review of #824's pull request). Fixed; its details were given to the owner.
+
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_profile_warnings_shown.py`.
+
 **`workflow ready --fetch`, `workflow status --fetch` and `workflow state join --fetch` refuse a missing `gh` in one line** (#857, found in the review of #824's pull request; covers #809's remaining case). `cli._fetch` ran `gh api` with `subprocess.run` and caught nothing, so with no `gh` on the PATH `workflow ready --fetch`, `workflow status --fetch` and `workflow state join --fetch` ended in a traceback ending `FileNotFoundError: [Errno 2] No such file or directory: 'gh'`, exit 1.
 
 - **Changed:** they now print one line on standard error and exit 1: `` workflow: can't run `gh api repos/<repo>/issues`: gh (the GitHub CLI) isn't installed here (fetch them with the GitHub MCP tools and give --issues and --prs files instead) ``. A `gh` the system won't start (one without the execute bit, say) gets `couldn't run gh: <why>` in its place, as `fetch._run` words it. `workflow state join --fetch` keeps its own wording: `` workflow state join: the open issues couldn't be read (can't run `gh api repos/<repo>/issues`: gh (the GitHub CLI) isn't installed here); give --issues F and --permissions F in place of --fetch ``.
