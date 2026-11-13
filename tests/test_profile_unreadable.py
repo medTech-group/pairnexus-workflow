@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+import fake_gh
 from changelog_notes import since_0110
 from test_doctor import _line, _project
 from test_status_local_gaps import _status
@@ -222,3 +223,19 @@ def test_merge_check_gives_the_profiles_mistake_as_its_reason(tmp_path, monkeypa
     [reason] = [r for r in got["reasons"] if r.get("input") == "profile"]
     assert reason["message"] == f"Not yet: couldn't read the profile: {said}."
     assert str(tmp_path) not in json.dumps(got)
+
+
+@pytest.mark.parametrize("make, said", SHAPES)
+def test_fetch_with_a_profile_it_cant_read_names_its_mistake(tmp_path, monkeypatch, capsys, make, said):
+    """`workflow preview --fetch` names the profile's mistake in `load`'s
+    words, never the absolute path, and asks GitHub nothing (round 3 of the review)."""
+    make(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    gh = fake_gh.install(tmp_path, monkeypatch, {})
+    capsys.readouterr()
+    assert cli.main(["preview", "--fetch", "12"]) == 2
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert f"the profile can't be read ({said})" in err
+    assert "Traceback" not in err and str(tmp_path) not in err
+    assert gh.calls() == []
