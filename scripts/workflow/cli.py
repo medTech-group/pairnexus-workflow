@@ -276,18 +276,22 @@ def _fetch(repo: str, what: str) -> list[dict]:
     objects, or pages of them, raises it too, with the reason
     `_issues_file` gives a file (`_not_a_list`, #789): `--slurp`'s checked
     whole, as a file is, and each page an old `gh` prints or read one at a
-    time on its own.
+    time on its own. A `gh api … failed` line shows the repo through
+    `reviews._shown`, as `_gave` does, here and in `fetch.by_page`'s own
+    message, so it stays one line (#792).
     """
-    path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
+    query = "issues?state=all&per_page=100" if what == "issues" else "pulls?state=open&per_page=100"
+    path = f"repos/{repo}/{query}"
+    raw, shown = f"repos/{repo}/", f"repos/{reviews_mod._shown(repo, len(repo))}/"
 
-    def failed(p) -> SystemExit:
-        return SystemExit(f"gh api {path} failed: {p.stderr.strip()[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.")
+    def failed(why: str) -> SystemExit:
+        return SystemExit(f"gh api {shown}{query} failed: {why.replace(raw, shown)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.")
 
     def by_page() -> list:
         try:
             return fetch_mod.by_page(path)
         except fetch_mod.GhError as e:
-            raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
+            raise failed(str(e)) from None
 
     def items(pages: list) -> list[dict]:
         """The objects in `pages`, each value as `gh` printed it, once each is
@@ -311,12 +315,12 @@ def _fetch(repo: str, what: str) -> list[dict]:
     if fetch_mod.numeric_refused(p, path):
         return items(by_page())
     if "slurp" not in (p.stderr + p.stdout).lower():
-        raise failed(p)
+        raise failed(p.stderr.strip())
     p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
     if fetch_mod.numeric_refused(p, path):
         return items(by_page())
     if p.returncode:
-        raise failed(p)
+        raise failed(p.stderr.strip())
     try:
         pages = posts_mod.decode_values(p.stdout)
     except posts_mod.CommentsError as e:

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**`workflow status --fetch` shows the repo escaped when `gh api` fails** (#792, found in the review of #775's pull request). When `gh api` failed, `workflow status --fetch` (and `workflow ready --fetch` and `workflow state join --fetch`, which read through the same fetch) printed the profile's `project.repo` raw in its `gh api repos/<repo>/issues?… failed: …` line, so `repo = "acme/de\nmo"` split the line in two, and a backtick or U+202E in the name printed as it is, while #775's refusal of the same command showed it escaped.
+
+- **Escaped now,** through `reviews._shown`, as #775's refusal shows it: `` gh api repos/acme/de\nmo/issues?state=all&per_page=100 failed: gh: Not Found (HTTP 404) ``, on one line, a backtick as `` \` `` and U+202E as `\u202e`. It holds for `--slurp`'s failure, an old `gh`'s and the page-by-page fallback's (#568), where the repo in `fetch.by_page`'s own message (`gh api repos/<repo>/issues has more than … pages`) is shown escaped too.
+- **Unchanged:** an ordinary repo's messages, word for word, and what `gh` is asked for.
+- **For projects updating:** nothing to do. `VERSION` is unchanged. Tests: `tests/test_fetch_failure_repo.py`.
+
 **`workflow ready --fetch` refuses issues without a whole-number number in one line** (#790, found in the review of #775's pull request). `workflow ready --fetch` read `gh api`'s issues and pull requests with no check of their numbers, so an item with no `number` (`[[{"title": "no number", "labels": []}]]`) ended in `KeyError: 'number'`, and a list mixing `"number": "1"` and `"number": 2` in `TypeError: '<' not supported between instances of 'int' and 'str'`, exit 1, with or without `--json`. #775 made `workflow status --fetch` refuse them; `ready --fetch` reads through the same fetch.
 
 - **One line now,** on standard error, nothing on standard output, exit 1, with or without `--json`: the words `status --fetch` gives, `` workflow: can't read the issues `gh api repos/<repo>/issues` gave: N of M has no whole-number number (fetch them with the GitHub MCP tools and give --issues and --prs files instead) ``, or the pull requests `gh api repos/<repo>/pulls` gave. Both commands print it through one helper, `cli._unnumbered_line`, which calls `cli._unnumbered` (#775). It holds on every route `_fetch` reads by: `--slurp`, an old `gh` without it, and the pages read one at a time where the proxy refuses the next-page link (#568).
