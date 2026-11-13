@@ -10,7 +10,7 @@ import pytest
 
 import fake_gh
 from changelog_notes import entry
-from workflow import cli, fetch
+from workflow import charter, cli, fetch, state
 
 QUERY = "issues?state=all&per_page=100"
 AGAIN = "Fetch with the GitHub MCP tools instead and pass --issues/--prs files."
@@ -105,6 +105,24 @@ def test_the_pull_requests_failure_shows_the_repo_escaped_too(monkeypatch, capsy
     fake_gh.install(tmp_path, monkeypatch, {"repos/acme/de\nmo/issues": fake_gh.pages([])})
     lines = _failure(capsys, "status", "--fetch")
     assert lines == ["gh api repos/acme/de\\nmo/pulls?state=open&per_page=100 failed: gh: Not Found (HTTP 404)", AGAIN]
+
+
+def test_state_join_fetch_s_404_keeps_the_reason_with_the_repo_escaped(monkeypatch, capsys, tmp_path):
+    """`state join --fetch` reads the issues through `_fetch` too: its one line
+    keeps `gh api … failed`'s reason, with the repo escaped, and writes nothing."""
+    _project(monkeypatch, tmp_path, '"acme/de\\nmo"')
+    fake_gh.install(tmp_path, monkeypatch, {})
+    c = charter.defaults()
+    c["limits"]["ends_at"] = "2099-10-13T03:30:00Z"
+    s = state.empty(c)
+    s["run_id"] = "2026-11-13-join"
+    s["tickets"] = {"378": {"status": "running", "attempts": 1}}
+    (tmp_path / "body.md").write_text(state.put("## Run\n", s), encoding="utf-8")
+    lines = _failure(capsys, "state", "join", "--body", "body.md", "--fetch", "--out", "new.md")
+    assert len(lines) == 1, lines
+    assert f"gh api repos/acme/de\\nmo/{QUERY} failed: gh: Not Found (HTTP 404)" in lines[0]
+    assert "acme/de\nmo" not in lines[0]
+    assert not (tmp_path / "new.md").exists()
 
 
 # ---------- an ordinary repo ----------
