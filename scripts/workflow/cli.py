@@ -98,7 +98,7 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import PROFILE_PATH, ProfileError, code_rule, load, project_root, resolve_experience
+from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, project_root, resolve_experience
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -518,6 +518,9 @@ def _status(a) -> int:
     prof, error = _read_profile(root)
     issues = prs = None
     if a.fetch:
+        if error == REPO_CONTROL:  # refused as `ready --fetch` refuses it (#821)
+            print(f"workflow: {error}", file=sys.stderr)
+            return 1
         if error:
             print("workflow status: the kit's profile has an error, so issues weren't read (see kit.profile)", file=sys.stderr)
         elif not prof:

@@ -12,6 +12,7 @@ has no traceback to refuse: its tests here pin that.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ import pytest
 import fake_gh
 from changelog_notes import entry
 from workflow import charter, cli, state
+from workflow import profile as profile_mod
 
 KIT = Path(__file__).resolve().parents[1]
 
@@ -168,6 +170,10 @@ def test_the_line_is_status_fetchs_line(monkeypatch, capsys, tmp_path, issues):
 
 def test_the_repo_is_shown_escaped(monkeypatch, capsys, tmp_path):
     """The profile's `project.repo` with a newline in it keeps the refusal one line (`cli._gave`)."""
+    # The profile refuses a control character in project.repo since #821
+    # (`tests/test_profile_repo_control.py`): past that check, this still
+    # tests that `_gave` shows any repo it is given escaped.
+    monkeypatch.setattr(profile_mod, "CONTROL", re.compile(r"(?!)"))
     _project(monkeypatch, tmp_path, '"acme/de\\nmo"')
     routes = {"repos/acme/de\nmo/issues": fake_gh.pages([NO_NUMBER_790]), "repos/acme/de\nmo/pulls": fake_gh.pages([PR])}
     fake_gh.install(tmp_path, monkeypatch, routes)
