@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from changelog_notes import released, since_0110
+from changelog_notes import entry, released, since_0110
 from test_adopt import CLI, _run, _starter
 
 KIT = Path(__file__).resolve().parents[1]
@@ -49,11 +49,18 @@ def test_case_two_is_one_escaped_line(tmp_path):
 
 
 def test_the_note_and_this_file_name_the_area_only():
-    notes = since_0110()
-    start = notes.index("(#862")
-    note = notes[start:notes.index("\n\n**", start)]
+    note = entry("#862, found in the review of #824's pull request")
     for text in (note, __doc__):
         assert "workflow adopt" not in text and "whatever" not in text
+
+
+def test_the_area_only_test_reads_the_note_with_the_shared_helper():
+    """The overview's "Reuse, not copies": the test above finds #862's note
+    with `changelog_notes.entry`, not a copy of its lookup."""
+    import inspect
+
+    src = inspect.getsource(test_the_note_and_this_file_name_the_area_only)
+    assert "entry(" in src and ".index(" not in src
 
 
 def test_changelog_notes_it_under_unreleased():
