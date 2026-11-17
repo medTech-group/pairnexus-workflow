@@ -359,9 +359,29 @@ def test_the_ci_none_briefing_has_no_line_to_stay():
 # ---------- changelog ----------
 
 
+def _assert_the_note(changelog=None):
+    # Read from "## Unreleased" down (#888), so the note still counts once a release moves it.
+    notes = since_0110(changelog)
+    assert "(#672, split out of #663)" in notes
+    assert "Evidence for `<sha>` to come" in notes
+
+
 def test_changelog_has_the_note_under_unreleased():
-    notes = since_0110()
-    rest = notes[len("## Unreleased"):]
-    unreleased = rest[:rest.index("\n## ")] if "\n## " in rest else rest
-    assert "(#672, split out of #663)" in unreleased
-    assert "Evidence for `<sha>` to come" in unreleased
+    _assert_the_note()
+
+
+def test_the_note_is_still_found_once_a_release_moves_it():
+    # #888: the next release puts its heading under "## Unreleased", above the notes it releases.
+    text = (KIT / "CHANGELOG.md").read_text()
+    head = text.index("## Unreleased\n") + len("## Unreleased\n")
+    moved = text[:head] + "\n## 0.1.99\n" + text[head:]
+    assert since_0110(moved).index("## 0.1.99") < since_0110(moved).index("(#672, split out of #663)")
+    _assert_the_note(moved)
+
+
+def test_a_changelog_without_the_note_fails():
+    # #888: reading the whole of the notes since 0.1.10 still misses a note that isn't there.
+    text = (KIT / "CHANGELOG.md").read_text()
+    assert "(#672, split out of #663)" in text
+    with pytest.raises(AssertionError):
+        _assert_the_note(text.replace("(#672, split out of #663)", "(#000)"))
