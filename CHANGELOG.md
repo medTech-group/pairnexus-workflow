@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.1.23
+
+**The architecture overview, the project graph's first command, evidence reports a merge can rely on, and seven security fixes.** Set-up and the kit's update now write an architecture overview, `docs/architecture/README.md`, and list it in `project.rules` (spec #611). `workflow index` gives a change the overview and the pages covering what it touches, and planning, building, the review panel and `workflow doctor` read them, so a session knows the project's structure and where a structural line goes. `workflow graph cites` (#744), the first command of spec #682's project graph, lists the passages, open issues and pull requests that cite an issue or an ADR, as advice that blocks nothing. A ticket session's evidence report now always describes the commit it names: a background evidence run never reports a tree it didn't test, watches the working tree after each shard, and starts again when the head moves. The session stays after the merge to post it, and merges the base in on a conflict, including when the merge queue drops its head. Seven security problems are fixed, four in the guard (#833, #859, #863, #872) and three in terminal output (#824, #856, #862); their details stay with the owner. And `workflow status`, `ready`, `doctor`, `merge-check`, `protection` and `profile check` now refuse a file, a profile or `gh` output they can't use in one line, never a traceback, and `workflow status` and `ready` show the control characters in a title as escapes.
+
+- **For projects updating to 0.1.23:**
+  - The update writes `docs/architecture/README.md` and lists it in `project.rules` (the `update-workflow` skill's step 7), moving an existing `docs/architecture/README.md` to `docs/architecture/earlier-overview.md` first. A project using the kit as a plugin asks Claude to "Write the architecture overview", or picks it where "check the set-up" offers it (#618).
+  - If a test suite or a `[repair]` command rewrites a tracked file (a lockfile, a snapshot), its evidence report is now marked dirty and doesn't count for the merge rule: make it write elsewhere, or untrack and git-ignore that file (#703).
+  - A `project.repo` holding a control character is now refused when the profile is read (#821).
+  - A project with its own copy of `ticket-session-prompt.md` keeps its old **Check-ins**, **The merge queue** and **Merging** lines until it takes the new ones (#663, #664, #685).
+  - Nothing else to do: the security fixes reach a project with the update.
+
 **A security problem in the guard is fixed** (#872, found in the review of #863's pull request). Its details stay with the owner.
 
 - **Unchanged:** a project without the kit still reads as "not set up", and an ordinary project is guarded as before.
