@@ -60,14 +60,81 @@ _MID_BLOCKED = re.compile(rf"\bblocked\s+by\s*:?\s*\**\s*({_ONE_REF}(?:\s*(?:,|\
 _NEGATED = re.compile(r"(?:\bnot|\bno\s+longer|n['’]t|\bnever)\s+(?:\w+\s+)?$", re.I)
 
 
+def is_whole(v) -> bool:
+    """Whether a value read from JSON or TOML is a whole number: an `int`,
+    never a `bool` (which Python counts as one). A float such as `3.0`, a
+    text such as `"3"` and None aren't. Every whole-number check in the kit
+    calls it (#773); a caller adds its own range."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def escape_surrogates(text: str) -> str:
+    """The text with each lone surrogate (half a pair, as JSON's `\\ud800`
+    gives it) written as JSON escapes it, `\\ud800`: UTF-8 can't encode one,
+    so printing it ends in a traceback. Everything else is left as it is
+    (#774)."""
+    return _SURROGATE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
+
+
+# Unicode's Cc set: the control characters C0, DEL and C1 (#823).
+_CC = "\x00-\x1f\x7f-\x9f"
+CC = re.compile(f"[{_CC}]")
+
+
+def has_control(text: str) -> bool:
+    """Whether the text holds a control character, Unicode's Cc set exactly
+    (C0, DEL and C1): the kit's one test of that set (#823). A separator, a
+    bidirectional override and a backtick aren't in it."""
+    return CC.search(text) is not None
+
+
+# The Cc set, the line and paragraph separators, and the bidirectional
+# embeddings, overrides and isolates: each could start a line, or be acted on
+# by a terminal, if printed as it is (#776).
+_CONTROL = re.compile(f"[{_CC}\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+_NAMED = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def escape_controls(text: str) -> str:
+    """Untrusted text (an issue's title, a branch) as a terminal may show it:
+    each control character, line or paragraph separator and bidirectional
+    override written as JSON escapes it (`\\n`, `\\u001b`), so it can't
+    add a line or send an escape code; everything else, text outside ASCII
+    and a lone surrogate among it, is left as it is (#776)."""
+    return _CONTROL.sub(lambda m: _escaped(m.group()), text)
+
+
+def escape_unprintable(text: str) -> str:
+    """Text whose characters must be told apart (a check's or a file's name,
+    a value someone gave) as a terminal may show it: what `escape_controls`
+    escapes, written the same way, and every other character
+    `str.isprintable()` rejects (a format character such as an emoji's joiner
+    or a right-to-left mark, a space other than ASCII's, a lone surrogate, a
+    private-use or unassigned code point), so nothing invisible passes for
+    something else. Other text outside ASCII is left as it is (#805)."""
+    return "".join(c if c.isprintable() else _escaped(c) for c in text)
+
+
+def _escaped(c: str) -> str:
+    """One character as JSON escapes it: `\\n`, `\\r`, `\\t`, else `\\u001b`,
+    and one past U+FFFF as its surrogate pair (`\\udb40\\udc67`), so it can't
+    print as a different name."""
+    if ord(c) > 0xFFFF:
+        high, low = divmod(ord(c) - 0x10000, 0x400)
+        return f"\\u{0xD800 + high:04x}\\u{0xDC00 + low:04x}"
+    return _NAMED.get(c) or f"\\u{ord(c):04x}"
+
+
 def labels_of(issue: dict) -> set[str]:
-    """The issue's labels, casefolded."""
-    out = set()
-    for l in issue.get("labels") or []:
-        name = (l.get("name") or "") if isinstance(l, dict) else str(l)
-        if name:
-            out.add(name.casefold())
-    return out
+    """The issue's labels, casefolded, as GitHub matches them: names, or
+    objects with a text `name`. A label of any other type is read past, the
+    others kept, and a `labels` field that isn't a list reads as none (#772)."""
+    labels = issue.get("labels")
+    names = [l.get("name") if isinstance(l, dict) else l for l in labels] if isinstance(labels, list) else []
+    return {n.casefold() for n in names if isinstance(n, str) and n}
 
 
 def assignees_of(issue: dict) -> list[str]:
@@ -298,11 +365,14 @@ def closed_by_open_prs(prs: list[dict], repo: str | None = None) -> dict[int, in
     return out
 
 
+def is_spec(issue: dict) -> bool:
+    """The `spec` label, or a "Spec:" title."""
+    return SPEC_LABEL in labels_of(issue) or (issue.get("title") or "").strip().casefold().startswith("spec:")
+
+
 def is_build_ticket(issue: dict) -> bool:
-    """Not a map, not a spec (label or a "Spec:" title), not a parent of sub-issues."""
-    if labels_of(issue) & NOT_BUILD_LABELS:
-        return False
-    if (issue.get("title") or "").strip().casefold().startswith("spec:"):
+    """Not a map, not a spec (`is_spec`), not a parent of sub-issues."""
+    if labels_of(issue) & NOT_BUILD_LABELS or is_spec(issue):
         return False
     subs = issue.get("sub_issues_summary") or {}
     if isinstance(subs, dict) and (subs.get("total") or 0) > 0:
@@ -769,7 +839,7 @@ def parent_of(issue: dict, repo: str | None = None) -> int | None:
     does), else the first ref on the first line under a `## Parent` heading.
     None when it has none, or its parent is in another repository."""
     p = issue.get("parent")
-    if isinstance(p, dict) and isinstance(p.get("number"), int) and not isinstance(p["number"], bool):
+    if isinstance(p, dict) and is_whole(p.get("number")):
         where = p.get("repository")
         if isinstance(where, dict):
             where = where.get("full_name") or where.get("nameWithOwner")
@@ -839,7 +909,7 @@ def _spec_note(
 
     try:
         carried = spec.get("comments")
-        if isinstance(carried, int) and not isinstance(carried, bool) and carried == 0:
+        if is_whole(carried) and carried == 0:
             comments = []
         elif isinstance(carried, (list, dict)):  # the MCP route's file carries them
             comments = comments_from(carried)

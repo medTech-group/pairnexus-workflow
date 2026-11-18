@@ -24,6 +24,7 @@
     workflow briefing verify --file F
     workflow index reads --base REF [--paths P ...] [--json]      (the architecture overview, then the pages a change's files, and the paths given, read; changes nothing)
     workflow index pages [--json]      (every architecture page: its file, Covers: globs, interface and helpers)
+    workflow graph cites ID... --issues F --prs F | --fetch [--json]      (what rests on a decision: the passages at origin/<base> and the open issues citing #n or ADR:NNNN; writes nothing but the base branch's fetch)
     workflow research fingerprint URL --page F | --fetch [--saved F --fingerprints F] [--json]      (a page's paragraphs and their SHA-256; writes only the two files given, both or neither)
     workflow research check --note F [--page URL F ...] [--fetch] [--json]      (a note's key sources against their fingerprints; writes nothing)
     workflow research notes [--dir DIR] [--json]      (the research notes marked current)
@@ -75,6 +76,7 @@ from . import fetch as fetch_mod
 from . import findings as findings_mod
 from . import _old_python, fallback
 from . import gate as gate_mod
+from . import graph as graph_mod
 from . import guard as guard_mod
 from . import handoff as handoff_mod
 from . import issues as issues_mod
@@ -96,9 +98,12 @@ from . import state as state_mod
 from . import status as status_mod
 from . import updates as updates_mod
 from . import vendor as vendor_mod
-from .profile import PROFILE_PATH, ProfileError, code_rule, load, project_root, resolve_experience
+from .profile import PROFILE_PATH, REPO_CONTROL, ProfileError, code_rule, load, missing, project_root, resolve_experience, unreadable
 
 KIT_ROOT = Path(__file__).resolve().parents[2]
+
+
+_CLOSED = "it is closed"  # standard input's reason, closed
 
 
 class InputUnreadable(OSError):
@@ -107,12 +112,13 @@ class InputUnreadable(OSError):
     it as before; `main` refuses any other in one line (`_read_refusal`).
     Standard input closed, or no path given, has no errno: its text is
     "standard input (-) is closed" or "no path was given", never
-    `[Errno None] ...`."""
+    `[Errno None] ...`. A `--issues` or `--prs` file `_issues_file` read but
+    can't take (#757) has none either: its text is its reason."""
 
     def __str__(self) -> str:
         if self.errno is not None:
             return super().__str__()
-        return "standard input (-) is closed" if self.filename == "-" else self.strerror
+        return "standard input (-) is closed" if self.filename == "-" and self.strerror == _CLOSED else self.strerror
 
 
 class InputNotText(UnicodeDecodeError):
@@ -130,7 +136,7 @@ def _read(path: str) -> str:
             raise InputUnreadable(None, "no path was given", "")
         if path == "-":
             if sys.stdin is None:
-                raise InputUnreadable(None, "it is closed", "-")
+                raise InputUnreadable(None, _CLOSED, "-")
             return sys.stdin.buffer.read().decode("utf-8")  # its bytes: Python's own reading lets bad ones through
         return Path(path).read_text(encoding="utf-8")
     except InputUnreadable:
@@ -154,8 +160,134 @@ def _json(path: str):
     return json.loads(_read(path))
 
 
+def _issues_file(path: str, what: str) -> list[dict]:
+    """A `--issues` or `--prs` file (`what`: "issues" or "pull requests"), as
+    the GitHub API lists them: a list of objects with a number, or
+    `--paginate --slurp`'s pages of them, flattened. A file that isn't JSON,
+    or isn't such a list (GitHub's error object, say), raises
+    `InputUnreadable` with no errno, so `main` refuses it in one line (#757):
+    JSON text read as doctor reads it (`doctor._parse_json`), its reason."""
+    value, why = doctor_mod._parse_json(_read(path).removeprefix("﻿"))
+    if why:
+        raise InputUnreadable(None, why, path)
+    why = _not_a_list(value, what, deepest=2, each=lambda x: doctor_mod._number(x) is not None)  # the list, and the pages in it
+    if why:
+        raise InputUnreadable(None, why, path)
+    return _fetch_items(value)
+
+
+def _stdin_taken(flag: str | None, owner: str) -> str:
+    """Why `--<flag>`'s `-` can't be read: standard input (-) is already
+    `--<owner>`'s, and can be read once. The one place for these words:
+    `_stdin_taken_line`, `_json_inputs` (no flag) and `ready`'s
+    `--permissions` give them through it (#794)."""
+    why = f"standard input (-) is already --{owner}'s: only one file can be read from it"
+    return f"--{flag}: {why}" if flag else why
+
+
+def _stdin_taken_line(cmd: str, issues_path: str, prs_path: str) -> str | None:
+    """The one line `workflow <cmd>` refuses `--issues -` and `--prs -` with
+    (#794), or None: standard input can be read once, so `--issues`'s read
+    left `--prs` nothing and `_read` said "it is empty". Checked before
+    either is read, in `_stdin_taken`'s words."""
+    if issues_path == "-" and prs_path == "-":
+        return f"workflow {cmd}: {_stdin_taken('prs', 'issues')}"
+    return None
+
+
+def _not_a_list(value, what: str, deepest: int | None = None, each=None) -> str | None:
+    """Why `value`, JSON as read, isn't a list of `what` ("issues" or "pull
+    requests"), or None: the reason `_issues_file` gives a file (#757) and
+    `_fetch` gives each page `gh` gives (#789). A list is one when nothing in
+    it, however its lists nest, is anything but an object; with `deepest`,
+    its lists nest no deeper than that (as `_fetch_items` counts it), and
+    with `each`, every object passes it (a file's whole-number number).
+    Any other list is "a list holding something other than" them; anything
+    else is named by its kind, GitHub's error object with its message,
+    escaped and cut to 80 characters (`reviews._shown`)."""
+    if isinstance(value, list):
+        try:
+            entries = _fetch_items(value, deepest=deepest, only_objects=True)
+        except (TooDeep, NotAnObject):
+            entries = None
+        if entries is not None and (each is None or all(each(x) for x in entries)):
+            return None
+        kind = f"a list holding something other than {what}"
+    elif isinstance(value, dict):
+        message = value.get("message")
+        kind = "a JSON object" + (f', GitHub\'s message "{reviews_mod._shown(message, 80)}"' if isinstance(message, str) else "")
+    else:
+        kind = "a string" if isinstance(value, str) else "true or false" if isinstance(value, bool) else "null" if value is None else "a number"
+    return f"it isn't a list of {what} (it is {kind})"
+
+
 def _out(obj) -> None:
     print(json.dumps(obj, indent=2) if not isinstance(obj, str) else obj)
+
+
+def _print_text(text: str, file=None) -> None:
+    """Print a command's text with each character the stream's encoding can't
+    take written as Python's backslash escape (`\\U0001f600`, `\\u2026`,
+    `\\xe4`), the rest as it is, so a standard output in cp1252 or ASCII never
+    ends the command in a traceback (#786). A stream that names no encoding
+    takes the text as it is; one whose encoding Python can't round-trip gets
+    it in ASCII, escaped the same way."""
+    stream = sys.stdout if file is None else file
+    encoding = getattr(stream, "encoding", None)
+    if encoding:
+        try:
+            text = text.encode(encoding, "backslashreplace").decode(encoding)
+        except (LookupError, UnicodeError):
+            text = text.encode("ascii", "backslashreplace").decode("ascii")
+    print(text, file=stream)
+
+
+# How deep `_fetch` reads lists: `--paginate --slurp`'s pages of items, as
+# `_fetch` wraps them, are three; past this, it isn't what `gh` prints (#788).
+# It counts that wrapping list, so `gh`'s own output is read up to 7 deep.
+FETCH_DEPTH = 8
+# What `_fetch`'s refusals suggest instead.
+FETCH_INSTEAD = "fetch them with the GitHub MCP tools and give --issues and --prs files instead"
+
+
+class FetchUnreadable(SystemExit):
+    """`_fetch`'s refusal of output `gh` gave with exit 0 that it can't read
+    (#788): `gave`, what it names ("the issues `gh api repos/<repo>/issues`
+    gave"), and `why`, for a caller with its own wording (`state join`); as a
+    SystemExit, the one `workflow:` line the command prints, exit 1."""
+
+    def __init__(self, gave: str, why: str):
+        self.gave, self.why = gave, why
+        super().__init__(f"workflow: can't read {gave}: {why} ({FETCH_INSTEAD})")
+
+
+class GhNotRun(SystemExit):
+    """`_fetch`'s refusal when `gh` couldn't be run at all (#857, #809): none
+    on the PATH (`fetch.NOT_INSTALLED`), or one the system won't start (`couldn't
+    run gh: <why>`), in `fetch.not_run`'s words. `said`, ``can't run `gh api
+    repos/<repo>/issues`: <why>``, is there for a caller with its own wording
+    (`state join`); as a SystemExit, the one `workflow:` line the command
+    prints, exit 1."""
+
+    def __init__(self, said: str):
+        self.said = said
+        super().__init__(f"workflow: {said} ({FETCH_INSTEAD})")
+
+
+class TooDeep(ValueError):
+    """`_fetch_items` met lists nested deeper than its `deepest`."""
+
+
+class NotAnObject(ValueError):
+    """`_fetch_items` met, with `only_objects`, something that is neither a
+    list nor an object."""
+
+
+def _gave(repo: str, what: str) -> str:
+    """What `_fetch` read, as its refusals name it: the repo shown escaped
+    (`reviews._shown`), so the line stays one line (#775)."""
+    shown = reviews_mod._shown(repo, len(repo))
+    return f"the issues `gh api repos/{shown}/issues` gave" if what == "issues" else f"the pull requests `gh api repos/{shown}/pulls` gave"
 
 
 def _fetch(repo: str, what: str) -> list[dict]:
@@ -165,52 +297,118 @@ def _fetch(repo: str, what: str) -> list[dict]:
     prints the pages one after another, which are decoded one by one. Where a
     cloud session's proxy refuses the next-page link (#568), the pages are
     read one at a time (`fetch.by_page`). The issues list keeps its pull
-    requests: readiness resolves a PR blocker by them.
+    requests: readiness resolves a PR blocker by them. Output that isn't
+    JSON, holds a number too long or nests lists too deeply raises
+    `FetchUnreadable` (#788), with `--slurp` or without: read as JSON with
+    `doctor._parse_json`, the reader `_issues_file` uses (an old `gh`'s
+    pages one after another with `posts.decode_values`), its pages
+    flattened without recursion. Read page by page, only lists nested too
+    deeply that Python's own reader can read raise it; that route's other
+    refusals are #810's. On every route, output that isn't a list of
+    objects, or pages of them, raises it too, with the reason
+    `_issues_file` gives a file (`_not_a_list`, #789): `--slurp`'s checked
+    whole, as a file is, and each page an old `gh` prints or read one at a
+    time on its own. A `gh api … failed` line shows the repo through
+    `reviews._shown`, as `_gave` does, here and in `fetch.by_page`'s own
+    message, so it stays one line (#792). A `gh` that can't be run (none on
+    the PATH, or one the system won't start) raises `GhNotRun` (#857, #809),
+    in `fetch.not_run`'s words.
     """
-    path = f"repos/{repo}/issues?state=all&per_page=100" if what == "issues" else f"repos/{repo}/pulls?state=open&per_page=100"
+    query = "issues?state=all&per_page=100" if what == "issues" else "pulls?state=open&per_page=100"
+    path = f"repos/{repo}/{query}"
+    raw, shown = f"repos/{repo}/", f"repos/{reviews_mod._shown(repo, len(repo))}/"
 
-    def failed(p) -> SystemExit:
-        return SystemExit(f"gh api {path} failed: {p.stderr.strip()[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.")
+    def failed(why: str) -> SystemExit:
+        return SystemExit(f"gh api {shown}{query} failed: {why.replace(raw, shown)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.")
 
     def by_page() -> list:
         try:
             return fetch_mod.by_page(path)
         except fetch_mod.GhError as e:
-            raise SystemExit(f"gh api {path} failed: {str(e)[:300]}\nFetch with the GitHub MCP tools instead and pass --issues/--prs files.") from None
+            raise failed(str(e)) from None
 
-    p = subprocess.run(["gh", "api", "--paginate", "--slurp", path], capture_output=True, text=True)
-    values: list = []
-    if p.returncode == 0:
-        values = [json.loads(p.stdout or "[]")]
-    elif fetch_mod.numeric_refused(p, path):
-        values = by_page()
-    elif "slurp" in (p.stderr + p.stdout).lower():
-        p = subprocess.run(["gh", "api", "--paginate", path], capture_output=True, text=True)
-        if fetch_mod.numeric_refused(p, path):
-            return _fetch_items(by_page())
-        if p.returncode:
-            raise failed(p)
+    def items(pages: list) -> list[dict]:
+        """The objects in `pages`, each value as `gh` printed it, once each is
+        a list of objects, or pages of them (#789), and its lists nest no
+        deeper than `FETCH_DEPTH` (#788)."""
+        for page in pages:
+            why = _not_a_list(page, "issues" if what == "issues" else "pull requests")
+            if why:
+                raise FetchUnreadable(_gave(repo, what), why)
         try:
-            values = posts_mod.decode_values(p.stdout)
-        except posts_mod.CommentsError as e:
-            raise SystemExit(f"gh api {path}: couldn't read its output ({e})")
-    else:
-        raise failed(p)
-    return _fetch_items(values)
+            return _fetch_items(pages, deepest=FETCH_DEPTH)
+        except TooDeep:
+            raise FetchUnreadable(_gave(repo, what), "it is nested too deeply to read") from None
+
+    def gh(*flags: str) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(["gh", "api", *flags, path], capture_output=True, text=True)
+        except OSError as e:
+            why = fetch_mod.not_run(e)
+            noun = "issues" if what == "issues" else "pulls"
+            raise GhNotRun(f"can't run `gh api repos/{reviews_mod._shown(repo, len(repo))}/{noun}`: {why}") from None
+
+    p = gh("--paginate", "--slurp")
+    if p.returncode == 0:
+        value, why = doctor_mod._parse_json(p.stdout if p.stdout.strip() else "[]")  # no output: no pages
+        if why:
+            raise FetchUnreadable(_gave(repo, what), why)
+        return items([value])  # its pages in one list, checked whole as `_issues_file` checks a file's
+    if fetch_mod.numeric_refused(p, path):
+        return items(by_page())
+    if "slurp" not in (p.stderr + p.stdout).lower():
+        raise failed(p.stderr.strip())
+    p = gh("--paginate")
+    if fetch_mod.numeric_refused(p, path):
+        return items(by_page())
+    if p.returncode:
+        raise failed(p.stderr.strip())
+    try:
+        pages = posts_mod.decode_values(p.stdout)
+    except posts_mod.CommentsError as e:
+        raise FetchUnreadable(_gave(repo, what), f"it can't be read ({e})") from None
+    return items(pages)
 
 
-def _fetch_items(values) -> list[dict]:
-    """The objects in `_fetch`'s pages, however deep the lists nest."""
+def _unnumbered(items: list[dict], what: str) -> str | None:
+    """Why `_fetch`'s `items` (`what`, as the refusal names them) can't be
+    read, or None: each needs a whole-number `number` (`doctor._number`), as
+    `_issues_file` asks of a file's (#775)."""
+    n = sum(doctor_mod._number(x) is None for x in items)
+    return f"{what}: {n} of {len(items)} {'has' if n == 1 else 'have'} no whole-number number" if n else None
+
+
+def _unnumbered_line(repo: str, issues: list[dict], prs: list[dict]) -> str | None:
+    """The one `workflow:` line refusing `_fetch`'s issues or pull requests
+    from `repo` when any has no whole-number number (`_unnumbered`), the
+    issues named first, or None: what `status --fetch` (#775) and `ready
+    --fetch` (#790) print on standard error before exiting 1."""
+    why = _unnumbered(issues, _gave(repo, "issues")) or _unnumbered(prs, _gave(repo, "pulls"))
+    return f"workflow: can't read {why} ({FETCH_INSTEAD})" if why else None
+
+
+def _fetch_items(values, deepest: int | None = None, only_objects: bool = False) -> list[dict]:
+    """The objects in `_fetch`'s pages, in order, however deep the lists nest,
+    read without recursion (#788). With `deepest`, lists nested deeper than
+    that raise `TooDeep`; with `only_objects`, anything in them that isn't a
+    list or an object raises `NotAnObject` (#789), where it is otherwise left
+    out."""
     items: list[dict] = []
-
-    def add(v) -> None:
-        if isinstance(v, list):
-            for x in v:
-                add(x)
+    done = object()
+    stack = [(iter([values]), 0)]  # each list being read, and how deep it is
+    while stack:
+        it, depth = stack[-1]
+        v = next(it, done)
+        if v is done:
+            stack.pop()
+        elif isinstance(v, list):
+            if deepest is not None and depth >= deepest:
+                raise TooDeep(f"lists nested deeper than {deepest}")
+            stack.append((iter(v), depth + 1))
         elif isinstance(v, dict):
             items.append(v)
-
-    add(values)
+        elif only_objects:
+            raise NotAnObject(f"{type(v).__name__} in the lists")
     return items
 
 
@@ -224,7 +422,7 @@ def cmd_profile(a) -> int:
     warnings = profile_mod.check(prof)
     _out({"ok": True, "warnings": warnings, **profile_mod.summary(prof)})
     for w in warnings:
-        print(f"warning: {w}", file=sys.stderr)
+        print(f"warning: {issues_mod.escape_unprintable(w)}", file=sys.stderr)
     return 0
 
 
@@ -244,10 +442,21 @@ def cmd_ready(a) -> int:
         if not prof:
             raise SystemExit("--fetch needs a profile (project.repo)")
         issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
+        refused = _unnumbered_line(prof.repo, issues, prs)  # as `status --fetch` refuses them (#790)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
     else:
         if not a.issues or not a.prs:
             raise SystemExit("give --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
-        issues, prs = _json(a.issues), _json(a.prs)
+        refused = _stdin_taken_line("ready", a.issues, a.prs)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
+        issues, prs = _issues_file(a.issues, "issues"), _issues_file(a.prs, "pull requests")  # as `status` reads them (#779)
+    # Each field of the wrong type left out, as `status` reads it (#780); a
+    # summary's count of the wrong type alone, so a parent stays a parent.
+    issues, prs = [status_mod.as_read(i, by_count=True) for i in issues], [status_mod.as_read(p, by_count=True) for p in prs]
     verdicts = issues_mod.readiness(
         issues,
         prs,
@@ -276,13 +485,20 @@ def cmd_ready(a) -> int:
             }
         )
     else:
+        # Each title, area, reason and note through `escape_controls`: a
+        # control character in one is shown as its escape, so each ticket stays
+        # on its own line (#797). Then each line through `escape_surrogates`: a
+        # lone surrogate is shown as its escape, never a traceback (#785).
+        # Each line printed through `_print_text`: a character the output's
+        # encoding can't take is written as its backslash escape (#802).
+        esc, ctl = issues_mod.escape_surrogates, issues_mod.escape_controls
         for v in verdicts:
             mark = "READY" if v.ready else "wait "
-            why = "" if v.ready else " — " + "; ".join(v.reasons)
-            print(f"{mark} #{v.number} [{v.area or '-'}] {v.title}{why}")
+            why = "" if v.ready else " — " + "; ".join(ctl(r) for r in v.reasons)
+            _print_text(esc(f"{mark} #{v.number} [{ctl(v.area or '-')}] {ctl(v.title)}{why}"))
             for note in v.notes:
-                print(f"      note: {note}")
-        print("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
+                _print_text(esc(f"      note: {ctl(note)}"))
+        _print_text("start now: " + (", ".join(f"#{v.number}" for v in start) or "nothing"))
     return 0
 
 
@@ -317,7 +533,7 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
             if not permissions_file.strip():
                 raise issues_mod.SpecReviewsUnread("--permissions was given no file")
             if permissions_file == "-" and stdin_for:
-                raise issues_mod.SpecReviewsUnread(f"--permissions: standard input (-) is already --{stdin_for}'s: only one file can be read from it")
+                raise issues_mod.SpecReviewsUnread(_stdin_taken("permissions", stdin_for))
             if not given:  # read as merge-check reads its --permissions
                 given.append(_json_inputs(argparse.Namespace(permissions=permissions_file), ["permissions"])["permissions"])
             value, why = given[0]
@@ -328,7 +544,7 @@ def _note_unreviewed_specs(verdicts, issues, prs, repo: str | None, permissions_
             raise issues_mod.SpecReviewsUnread("the reviewers' permissions: no project.repo, give --permissions F")
         return gh("the reviewers' permissions (or give --permissions F)", lambda: fetch_mod.permissions_of(repo, logins, token))
 
-    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and type(p.get("number")) is int] if isinstance(prs, list) else []
+    pull_numbers = [p["number"] for p in prs if isinstance(p, dict) and issues_mod.is_whole(p.get("number"))] if isinstance(prs, list) else []
     issues_mod.note_unreviewed_specs(verdicts, issues, repo, comments, permissions, pull_numbers=pull_numbers)
 
 
@@ -350,16 +566,27 @@ def _status(a) -> int:
     prof, error = _read_profile(root)
     issues = prs = None
     if a.fetch:
+        if error == REPO_CONTROL:  # refused as `ready --fetch` refuses it (#821)
+            print(f"workflow: {error}", file=sys.stderr)
+            return 1
         if error:
             print("workflow status: the kit's profile has an error, so issues weren't read (see kit.profile)", file=sys.stderr)
         elif not prof:
             print("workflow status: the kit isn't set up here, so issues weren't read (--fetch needs the profile's project.repo)", file=sys.stderr)
         else:
             issues, prs = _fetch(prof.repo, "issues"), _fetch(prof.repo, "pulls")
+            refused = _unnumbered_line(prof.repo, issues, prs)
+            if refused:
+                print(refused, file=sys.stderr)
+                return 1
     elif a.issues or a.prs:
         if not a.issues or not a.prs:
             raise SystemExit("give both --issues and --prs (JSON files, as the GitHub API returns them), or --fetch")
-        issues, prs = _json(a.issues), _json(a.prs)
+        refused = _stdin_taken_line("status", a.issues, a.prs)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 1
+        issues, prs = _issues_file(a.issues, "issues"), _issues_file(a.prs, "pull requests")
     experience = resolve_experience(root, prof.experience if prof else None)
     local = doctor_mod.report(
         doctor_mod.Inputs(root=root, kit_root=KIT_ROOT, profile=prof, profile_error=error, experience=experience, gaps_only=True),
@@ -384,8 +611,8 @@ def _status(a) -> int:
     if a.json:
         _out({**st.as_dict(), "kit": kit})
     else:
-        print(status_mod.text(st))
-        print(_kit_line(kit))
+        _print_text(status_mod.text(st))
+        _print_text(_kit_line(kit))
     return 0
 
 
@@ -399,13 +626,9 @@ def _read_profile(root: Path):
     """(the profile, None), or (None, `profile check`'s error) for one that
     can't be used, as doctor reads it; (None, None) with no profile."""
     try:
-        if (root / PROFILE_PATH).exists() and not (root / PROFILE_PATH).is_file():
-            raise ProfileError(f"{PROFILE_PATH} isn't a file")  # a directory, or a pipe that would block the read
-        return load(root, required=False), None
+        return load(root, required=False), None  # `load` words a file it can't read (#829)
     except ProfileError as e:
         return None, str(e)
-    except UnicodeDecodeError:
-        return None, f"{PROFILE_PATH} isn't UTF-8 text"
     except (OSError, ValueError) as e:
         return None, f"{PROFILE_PATH} can't be read ({type(e).__name__})"
 
@@ -556,7 +779,7 @@ def cmd_protection(a) -> int:
     except protection_mod.ProtectionError as e:
         print(f"workflow protection: {e}", file=sys.stderr)
         return 2
-    print(out)
+    _print_text(out)
     return 0
 
 
@@ -723,12 +946,24 @@ def _charter_estimate(a) -> int:
     return 0
 
 
+def _load(root: Path | None = None, required: bool = True):
+    """`load`, with any `OSError` it still lets through refused in `load`'s
+    words (`profile.unreadable`): the callers here that refuse a profile they
+    can't read catch `ProfileError` alone. `load` refuses an error from
+    asking whether the profile is there itself (`profile.missing`), so #837
+    can point these callers back at `load`."""
+    try:
+        return load(root, required=required)
+    except OSError as e:
+        raise unreadable(e) from None
+
+
 def _page_profile():
     """The profile for the one page's size and review, or None when it can't be
     read: a broken profile never stops the page from rendering."""
     try:
         return load(required=False)
-    except (ValueError, OSError):  # ProfileError is a ValueError; so is a file that isn't UTF-8
+    except (ValueError, OSError):  # ProfileError is a ValueError, and `load` words a file it can't read as one (#829)
         return None
 
 
@@ -773,9 +1008,9 @@ def _charter_change_problems(old, new) -> list[str]:
     if not isinstance(c, dict) or charter_mod.validate(c):
         return []
     try:
-        prof = load(required=False)
-    except (UnicodeDecodeError, OSError) as e:
-        raise ProfileError(f"the profile can't be read ({e}), so the charter change can't be checked") from e
+        prof = _load(required=False)
+    except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
+        raise ProfileError(f"{e}, so the charter change can't be checked") from None
     if prof is None:
         print("note: no profile found: the charter change wasn't checked against it", file=sys.stderr)
         return []
@@ -890,7 +1125,8 @@ def _state_join(a, body: str) -> int:
         try:
             issues = _fetch(prof.repo, "issues")
         except SystemExit as e:
-            raise SystemExit(f"workflow state join: the open issues couldn't be read ({str(e.code).splitlines()[0]}); {instead}") from None
+            why = f"can't read {e.gave}: {e.why}" if isinstance(e, FetchUnreadable) else e.said if isinstance(e, GhNotRun) else str(e.code).splitlines()[0]
+            raise SystemExit(f"workflow state join: the open issues couldn't be read ({why}); {instead}") from None
         try:
             perms_raw = fetch_mod.permissions_of(prof.repo, state_mod.authors(s, issues))
         except fetch_mod.GhError as e:
@@ -903,7 +1139,7 @@ def _state_join(a, body: str) -> int:
         issues, perms_raw = estimate_mod._flatten(inputs["issues"][0]), inputs["permissions"][0]
         # A saved error (`{"message": …}`) or anything else that isn't an issue is never read as "no issues".
         for i in issues:
-            if not (isinstance(i, dict) and isinstance(i.get("number"), int) and not isinstance(i["number"], bool)):
+            if not (isinstance(i, dict) and issues_mod.is_whole(i.get("number"))):
                 said = f": {str(i['message'])[:200]}" if isinstance(i, dict) and "message" in i else ""
                 raise state_mod.StateError(f"--issues holds something that isn't an issue{said}; fetch the open issues again")
     try:
@@ -1018,7 +1254,7 @@ def _json_inputs(a, names, raw=()) -> dict:
             continue
         if path == "-":
             if stdin_for is not None:
-                inputs[name] = (None, f"standard input (-) is already --{stdin_for}'s: only one file can be read from it")
+                inputs[name] = (None, _stdin_taken(None, stdin_for))
                 continue
             stdin_for = name
         try:
@@ -1047,11 +1283,9 @@ def cmd_merge_check(a) -> int:
     inputs = _json_inputs(a, [*merge_mod.INPUTS, *merge_mod.WHEN_NEEDED, "charter"], raw=("charter",))  # the charter: JSON, or the tracking issue's body, as merge.charter_from reads it
     prof, profile_error = None, None
     try:
-        prof = load()  # its protected paths and required checks are rules: none found is a reason
-    except ProfileError as e:
+        prof = _load()  # its protected paths and required checks are rules: none found is a reason
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         profile_error = str(e)
-    except (OSError, UnicodeDecodeError) as e:
-        profile_error = f"can't read {PROFILE_PATH}: {getattr(e, 'strerror', None) or e}"
     root = prof.root if prof else project_root()
     charter = inputs.pop("charter", None)
     if a.fetch is not None:
@@ -1157,11 +1391,9 @@ def cmd_preview(a) -> int:
     missing = [n for n in fetch_mod.PREVIEW_INPUTS if n not in inputs]
     if a.fetch is not None and missing:
         try:
-            prof = load(required=False)
-        except ProfileError as e:
+            prof = _load(required=False)
+        except ProfileError as e:  # `load` words a file it can't read (#829)
             prof, why = None, f"the profile can't be read ({e})"
-        except (OSError, UnicodeDecodeError) as e:
-            prof, why = None, f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e})"
         else:
             why = f"there's no profile ({PROFILE_PATH})"
         if prof is None:
@@ -1181,6 +1413,58 @@ def cmd_preview(a) -> int:
         print(f"workflow preview: couldn't read --{e.name}: {e}", file=sys.stderr)
         return 1
     _out(got.as_dict() if a.json else previews_mod.text(got, sha))
+    return 0
+
+
+def cmd_graph(a) -> int:
+    """`graph cites` (spec #682, #744): each id's citing passages at
+    `origin/<base>`, fetched first, and the open issues and pull requests
+    citing it, counts first; `--json` the spec's list of objects. A run whose
+    state can't be read is named under the list, or on standard error with
+    `--json`; a fetch of the base branch that failed is said on standard
+    error as it comes, as `small.base_ref`'s other callers do. Exits 0, 1 when it
+    can't read what it needs, 2 for an id or inputs it can't take."""
+    name = "workflow graph cites"
+    try:
+        ids = list(dict.fromkeys(graph_mod.parse_id(i) for i in a.ids))
+    except graph_mod.BadId as e:
+        print(f"{name}: {e}", file=sys.stderr)
+        return 2
+    if a.fetch and (a.issues or a.prs):
+        print(f"{name}: give --fetch or --issues F and --prs F, not both", file=sys.stderr)
+        return 2
+    if not a.fetch and not (a.issues and a.prs):
+        print(f"{name}: give --issues F and --prs F (the issues and the open pull requests, as JSON from the GitHub API), or --fetch", file=sys.stderr)
+        return 2
+    root = project_root()
+    prof = load(root, required=False)
+    if not prof:
+        print(f"{name}: the kit isn't set up here (no profile), so the base branch isn't known", file=sys.stderr)
+        return 1
+    if a.fetch:
+        try:
+            issues = fetch_mod.api(f"repos/{prof.repo}/issues?state=all&per_page=100", paginate=True)
+            prs = fetch_mod.api(f"repos/{prof.repo}/pulls?state=open&per_page=100", paginate=True)
+        except fetch_mod.GhError as e:
+            print(f"{name}: couldn't fetch the issues and pull requests ({str(e)[:300]}): give --issues F and --prs F instead", file=sys.stderr)
+            return 1
+    else:
+        issues, prs = _json(a.issues), _json(a.prs)
+    issues, prs = _fetch_items(issues), _fetch_items(prs)
+    notes: list[str] = []
+    try:
+        results, unread = graph_mod.cites(root, prof.base_branch, ids, issues, prs, repo=prof.repo,
+                                          sensitive=list(prof.sensitive_patterns), note=lambda t: print(f"{name}: {t}", file=sys.stderr))
+    except graph_mod.GraphError as e:
+        print(f"{name}: {e}", file=sys.stderr)
+        return 1
+    notes += unread
+    if a.json:
+        _out([r.as_dict() for r in results])
+        for line in notes:
+            print(f"{name}: {line}", file=sys.stderr)
+    else:
+        print(graph_mod.text(results, notes))
     return 0
 
 
@@ -1255,9 +1539,9 @@ def _research_patterns() -> list[str]:
     command prints or writes. No profile: none. A profile that can't be read
     stops the command (exit 1), rather than print text unchecked."""
     try:
-        prof = load(required=False)
-    except (OSError, UnicodeDecodeError) as e:
-        raise ProfileError(f"{PROFILE_PATH} can't be read ({getattr(e, 'strerror', None) or e}), so [sensitive].patterns can't be left out") from None
+        prof = _load(required=False)
+    except ProfileError as e:  # `load` words a file it can't read (#829): its words, then this context
+        raise ProfileError(f"{e}, so [sensitive].patterns can't be left out") from None
     return list(prof.sensitive_patterns) if prof else []
 
 
@@ -1662,8 +1946,8 @@ def _own_hashes(a, commit: str) -> own_changes_mod.Hashes:
     the record still counts, and standard output stays the record alone."""
     unknown = f"{own_changes_mod.UNKNOWN} for diff and lines"
     try:
-        prof = load()
-    except (ProfileError, OSError, UnicodeDecodeError) as e:
+        prof = _load()
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         if _given_base(a) is None:
             _record_note(f"couldn't read the profile for the base branch ({e}): {unknown}")
             return own_changes_mod.UNKNOWN_HASHES
@@ -1706,8 +1990,8 @@ def _measure(a) -> int:
         print("workflow review-record: --measure needs --commit, the full 40-character SHA to measure (`git rev-parse HEAD`)", file=sys.stderr)
         return 2
     try:
-        prof = load()
-    except (ProfileError, OSError, UnicodeDecodeError) as e:
+        prof = _load()
+    except ProfileError as e:  # `load` words a file it can't read (#829)
         print(f"workflow review-record: can't measure: couldn't read the profile: {e}", file=sys.stderr)
         return 1
     try:
@@ -1882,13 +2166,17 @@ def _cant_decide(event, why: str, solo: bool | None = None, fixes: str = fallbac
     with `planning`, a session `_planning` treats as one): a push
     or a merge is asked, or refused in solo mode or where nobody is asked;
     anything else is left alone. A missing profile (the kit isn't set up) is
-    left alone too. Always 0, and never raises: a hook that exits non-zero
-    would let the tool run, or, once the hook blocks on failure, block them all."""
+    left alone too, as `missing` reads it. Always 0, and never raises: a hook
+    that exits non-zero would let the tool run, or, once the hook blocks on
+    failure, block them all."""
     try:
         if solo is None:
             root = project_root()
-            if not (root / PROFILE_PATH).exists():
-                return 0
+            try:
+                if missing(root / PROFILE_PATH):
+                    return 0
+            except OSError:
+                pass  # there, but can't be read: decided as for an invalid one
             solo = fallback.solo(root)
         d = fallback.decide(event, solo, why, fixes)
         if d:
@@ -2316,6 +2604,16 @@ def main(argv: list[str] | None = None) -> int:
     r = isub.add_parser("pages", help="every page, sorted by path: its file, Covers: globs (or covers nothing yet), interface line (or no interface given) and helpers")
     r.add_argument("--json", action="store_true", help='{"pages": [{"file", "covers": [globs], "interface", "helpers": [{"name", "what"}]}]}')
     r.set_defaults(fn=cmd_index)
+
+    s = sub.add_parser("graph", help="the project graph: what rests on a decision; calls no model, writes nothing but the base branch's fetch")
+    gsub = s.add_subparsers(dest="action", required=True)
+    r = gsub.add_parser("cites", help="each id's citing passages in the base branch's tracked text files at origin/<base>, fetched first, as file:line and sentence grouped by file, and the open issues and pull requests citing it, counts first")
+    r.add_argument("ids", nargs="+", metavar="ID", help="#n or ADR:NNNN (a research note's path, like an answer id, isn't read yet)")
+    r.add_argument("--issues", metavar="F", help="the issues as the GitHub API lists them, state=all (a list, or --paginate --slurp's pages)")
+    r.add_argument("--prs", metavar="F", help="the open pull requests as the GitHub API lists them")
+    r.add_argument("--fetch", action="store_true", help="read the issues and open pull requests with gh api, page by page")
+    r.add_argument("--json", action="store_true", help='[{"decision", "counts": {"passages", "files", "issues", "built_by", "spec_unsure"}, "passages": [{"file", "line", "sentence", "spec_unsure"}], "issues": [{"number", "kind", "claimed", "sentence", "spec_unsure"}], "built_by": [], "changed_by": []}]')
+    r.set_defaults(fn=cmd_graph)
 
     s = sub.add_parser("research", help="research notes in docs/research/<topic>/: a page's fingerprints, a note's key sources checked against theirs, the notes marked current; past stakes judgements and a study's estimated size; calls no model, writes only the two files fingerprint is given")
     rsub = s.add_subparsers(dest="action", required=True)

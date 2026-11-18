@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import re
 
+from . import issues as issues_mod
+
 AGENT_MARKER = "<!-- workflow:agent -->"
 
 _COMMENT_URL_ID = re.compile(r"#issuecomment-([0-9]{1,20})\b")
@@ -73,7 +75,7 @@ def _number(comment: dict) -> int | None:
     """The comment's id as a number: a whole-number `id`, an id of digits, or
     the `#issuecomment-<n>` of its URL (node ids such as "IC_kw…" aren't numbers)."""
     cid = comment.get("id")
-    if isinstance(cid, int) and not isinstance(cid, bool):
+    if issues_mod.is_whole(cid):
         return cid if 0 <= cid < 10**20 else None
     if isinstance(cid, str) and re.fullmatch(r"[0-9]{1,20}", cid.strip()):
         return int(cid.strip())

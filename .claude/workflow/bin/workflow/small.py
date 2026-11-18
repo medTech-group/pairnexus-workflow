@@ -24,6 +24,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import issues as issues_mod
+
 DEFAULT_MAX_LINES = 60  # the profile's run.small_max_lines
 DEFAULT_MAX_FILES = 4  # the profile's run.small_max_files
 MAX_LINES = range(1, 1001)  # what run.small_max_lines and --small-max-lines accept
@@ -147,7 +149,7 @@ def measure(changes: list[Change], globs: list[str], max_lines: int, max_files: 
     naming the first counted file without its additions and deletions."""
     mine = counted(changes, globs)
     for c in mine:
-        if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in (c.additions, c.deletions)):
+        if not all(issues_mod.is_whole(n) and n >= 0 for n in (c.additions, c.deletions)):
             raise NoCounts(f"`{c.path}` has no additions and deletions as whole numbers")
     return Measure(sum(c.additions + c.deletions for c in mine), len(mine), max_lines, max_files)
 

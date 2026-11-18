@@ -35,6 +35,7 @@ import unicodedata
 from dataclasses import dataclass
 from fractions import Fraction
 
+from . import issues as issues_mod
 from .merge import WRITE
 from .posts import AGENT_MARKER, _login, comments_from
 
@@ -164,7 +165,7 @@ def titles(issues) -> dict[int, str]:
                     walk(v[k])
             return
         n = v.get("number") if isinstance(v, dict) else None
-        if not isinstance(n, int) or isinstance(n, bool) or not isinstance(v.get("title"), str):
+        if not issues_mod.is_whole(n) or not isinstance(v.get("title"), str):
             said = f": {str(v['message'])[:200]}" if isinstance(v, dict) and "message" in v else ""
             raise RecordsError(f"it holds something that isn't an issue with a number and a title{said}")
         out[n] = v["title"]

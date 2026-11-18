@@ -1380,10 +1380,17 @@ def _key_sources_section(lines: list[str], path: Path) -> tuple[int, int]:
     return start, end
 
 
+def is_fingerprint_start(name: str, first: str) -> bool:
+    """Whether a file named `name`, whose text starts with `first`, is a
+    fingerprint file: named `*.fingerprints`, or, whatever its name, one whose
+    first line is a `url:` line. `workflow graph` leaves such files out."""
+    return str(name).endswith(FINGERPRINTS) or first.lstrip("﻿ \t\r\n")[:4].casefold() == "url:"
+
+
 def _is_fingerprint_file(f: Path, path: Path) -> bool:
-    """Whether `f` is a fingerprint file: named `*.fingerprints`, or, whatever
-    its name, a file whose first line is a `url:` line (only its first bytes
-    are read). A file that can't be read can't be ruled out: refused."""
+    """Whether `f` is a fingerprint file (`is_fingerprint_start`; only its
+    first bytes are read). A file that can't be read can't be ruled out:
+    refused."""
     if f.name.endswith(FINGERPRINTS):
         return True
     try:
@@ -1396,7 +1403,7 @@ def _is_fingerprint_file(f: Path, path: Path) -> bool:
             f"{path}: {f} is a file in the topic's folder that can't be read ({e.strerror or e}), so it can't be ruled out as a fingerprint file "
             "whose source wouldn't be read: make it readable, or move it out of the topic's folder"
         ) from None
-    return first.decode("utf-8", "replace").lstrip("\ufeff \t\r\n")[:4].casefold() == "url:"
+    return is_fingerprint_start(f.name, first.decode("utf-8", "replace"))
 
 
 def _every_fingerprint_file_listed(path: Path, sources: list[KeySource]) -> None:

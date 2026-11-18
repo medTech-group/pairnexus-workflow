@@ -43,6 +43,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from . import issues as issues_mod
 from . import presets as presets_mod
 
 MERGE_MODES = {"auto-merge", "session", "owner"}
@@ -237,7 +238,7 @@ def defaults(release_steps: list[str] | None = None, profile: Any = None, protec
     if profile is not None:
         lim = out["limits"]
         v = getattr(profile, "check_in_minutes", None)
-        if isinstance(v, int) and not isinstance(v, bool):
+        if issues_mod.is_whole(v):
             lim["check_in_minutes"] = v
         lim["check_in_minutes"] = min(max(lim["check_in_minutes"], 5), 240)
         lim["max_sessions"] = max(lim["max_sessions"], lim["max_parallel"])
@@ -326,11 +327,11 @@ def pin_plan(c: dict) -> dict:
 
 
 def _is_int_list(v) -> bool:
-    return isinstance(v, list) and all(isinstance(x, int) and not isinstance(x, bool) and x > 0 for x in v)
+    return isinstance(v, list) and all(issues_mod.is_whole(x) and x > 0 for x in v)
 
 
 def _pos_int(v, lo=1, hi=1000) -> bool:
-    return isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi
+    return issues_mod.is_whole(v) and lo <= v <= hi
 
 
 def _time(v) -> datetime | None:

@@ -29,6 +29,7 @@ import shutil
 import subprocess
 from urllib.parse import quote
 
+from . import issues as issues_mod
 from . import merge
 from .posts import CommentsError, _login, comments_from, decode_values
 
@@ -69,15 +70,20 @@ def available() -> bool:
     return shutil.which("gh") is not None
 
 
+def not_run(e: OSError) -> str:
+    """Why `gh` couldn't be started, from the `OSError` starting it raised:
+    `NOT_INSTALLED` when there is none on the PATH, else `couldn't run gh:
+    <why>`. `_run` and `cli._fetch` both word it through this."""
+    return NOT_INSTALLED if isinstance(e, FileNotFoundError) else f"couldn't run gh: {e.strerror or e}"
+
+
 def _run(args: list[str]) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT)
-    except FileNotFoundError:
-        raise GhError(NOT_INSTALLED) from None
     except subprocess.TimeoutExpired:
         raise GhError(TIMED_OUT) from None
     except OSError as e:
-        raise GhError(f"couldn't run gh: {e.strerror or e}") from None
+        raise GhError(not_run(e)) from None
 
 
 def _failed(p: subprocess.CompletedProcess) -> GhError:
@@ -206,7 +212,7 @@ def _refused(e: GhError) -> bool:
 
 
 def _id(v) -> int | None:
-    return v if isinstance(v, int) and not isinstance(v, bool) else None
+    return v if issues_mod.is_whole(v) else None
 
 
 def session_threads(r: str, number: int, pr) -> dict:
@@ -384,7 +390,7 @@ def merge_inputs(repo: str, number: int, have: dict, names, asker: str | None = 
         listed = api(f"{r}/rulesets?includes_parents=true&per_page=100", paginate=True)
         flat = _items(listed)
         ids = [x.get("id") for x in flat if isinstance(x, dict)]
-        if any(not isinstance(i, int) for i in ids) or len(ids) != len(flat):
+        if any(not issues_mod.is_whole(i) for i in ids) or len(ids) != len(flat):
             raise GhError("gh api's list of rulesets has an entry without an id")
         return [api(f"{r}/rulesets/{i}") for i in ids]  # each in full: the list gives summaries
 

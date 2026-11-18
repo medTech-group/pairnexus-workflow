@@ -30,6 +30,7 @@ refuses the tool when WORKFLOW_ROLE is firm, and doctor still gives its gap.
 
 import argparse
 import collections
+import errno
 import fnmatch
 import json
 import os
@@ -62,12 +63,16 @@ def _branch(where):
 
 def _ticket_branch(root):
     """The profile's run.ticket_branch, or None when the kit isn't set up (the
-    CLI never takes a role from the branch without a profile)."""
+    CLI never takes a role from the branch without a profile). Read through
+    `_profile_text`: a profile that is there but can't be read gives the
+    default, as the kit refuses it as an invalid profile."""
     try:
-        with open(os.path.join(root, ".claude", "workflow", "profile.toml"), encoding="utf-8", errors="replace") as f:
-            m = _TICKET_BRANCH.search(f.read())
-    except (OSError, ValueError):
+        text = _profile_text(root)
+    except (OSError, ValueError, TypeError):
         return None
+    if text is None:
+        return None
+    m = _TICKET_BRANCH.search(text)
     return m.group(1) if m else DEFAULT_TICKET_BRANCH
 
 
@@ -386,24 +391,33 @@ def _experience_file(root):
     Opened without waiting, and read only when it is a regular file, so a pipe
     never blocks."""
     try:
-        fd = os.open(os.path.join(root, ".workflow", "experience"), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-    except (OSError, ValueError, TypeError):
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        f = _open_file(os.path.join(root, ".workflow", "experience"), "rb")
+        if f is None:
             return None
-        with os.fdopen(fd, "rb") as f:
-            fd = None
+        with f:
             data = f.read(_EXPERIENCE_FILE_MAX + 1)
         if len(data) > _EXPERIENCE_FILE_MAX:
             return None
         lines = data.decode("utf-8").strip().splitlines()
-    except (OSError, ValueError):  # UnicodeDecodeError is a ValueError
+    except (OSError, ValueError, TypeError):  # UnicodeDecodeError is a ValueError
         return None
+    return _level(lines[0]) if len(lines) == 1 else None
+
+
+def _open_file(path, mode="r", **kwargs):
+    """`path` opened as `open(path, mode, **kwargs)` opens it, or None when it
+    isn't a file. Its errors are the caller's. `_experience_file` and
+    `_profile_text` read through it."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        f = open(fd, mode, **kwargs)
+        fd = None
+        return f
     finally:
         if fd is not None:
             os.close(fd)
-    return _level(lines[0]) if len(lines) == 1 else None
 
 
 def _experience(root, env):
@@ -430,20 +444,48 @@ def _has_previews(root):
     return bool(_PREVIEWS_TABLE.search(text) or _PREVIEWS_KEY.search(text[:first.start()] if first else text))
 
 
+# The errors that say a path isn't there. Any other error asking for it means
+# it may be there but can't be read.
+NOT_FOUND = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+
+
+def missing(path):
+    """Whether `path` isn't there: True when asking fails with an error saying
+    so (`NOT_FOUND`) or the path can't name a file (a NUL in it), False when
+    it is there, and any other `OSError` raised, as a path that is there but
+    can't be read. The one copy of the check: `profile` gives it on, and
+    `profile.load`, `cli._cant_decide` and `_profile_text` ask through it."""
+    try:
+        os.stat(path)
+    except OSError as e:
+        if e.errno in NOT_FOUND:
+            return True
+        raise
+    except ValueError:
+        return True
+    return False
+
+
 def _profile_text(root):
     """The profile's text, its bytes that aren't UTF-8 read as U+FFFD and a
     byte-order mark left out; "" when it is there but isn't a regular file
-    (a directory, or a pipe, never opened) or can't be read; None with no
-    profile."""
+    (a directory, or a pipe, never opened) or can't be read, and when `missing`
+    raises; None with no profile."""
     path = os.path.join(root, ".claude", "workflow", "profile.toml")
-    if not os.path.exists(path):
-        return None
+    try:
+        if missing(path):
+            return None
+    except OSError:
+        return ""
     if not os.path.isfile(path):
         return ""
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
+        f = _open_file(path, encoding="utf-8", errors="replace")
+        if f is None:
+            return ""
+        with f:
             return f.read().lstrip("\ufeff")
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return ""
 
 

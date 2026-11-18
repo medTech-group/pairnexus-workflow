@@ -29,6 +29,8 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+from . import issues as issues_mod
+
 PRESETS = ("light", "normal", "thorough")
 DEFAULT = "normal"
 LABELS = {"light": "Light", "normal": "Normal", "thorough": "Thorough"}
@@ -47,14 +49,14 @@ def under_rule(c: Any) -> bool:
     """A charter's run reviews under the rule for build reviewers: its `rule`
     is `RULE`. Without one, today's rule (anything else in it `charter
     validate` refuses)."""
-    return isinstance(c, dict) and type(c.get("rule")) is int and c["rule"] == RULE
+    return isinstance(c, dict) and issues_mod.is_whole(c.get("rule")) and c["rule"] == RULE
 
 
 def _run(profile: Any, key: str) -> int | str:
     """The profile's [run] number (or its pass cap `until-clean`), or its
     default without a profile."""
     v = getattr(profile, key, None)
-    if (isinstance(v, int) and not isinstance(v, bool)) or (key == "review_passes" and v == UNTIL_CLEAN):
+    if issues_mod.is_whole(v) or (key == "review_passes" and v == UNTIL_CLEAN):
         return v
     from .profile import Profile  # here, not at the top: profile.py imports this module
 
@@ -183,7 +185,7 @@ PROFILE_REVIEW = (
 
 
 def _whole(v: Any, lo: int, hi: int) -> bool:
-    return isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi
+    return issues_mod.is_whole(v) and lo <= v <= hi
 
 
 def valid_review(key: str, v: Any, lo: int, hi: int) -> bool:

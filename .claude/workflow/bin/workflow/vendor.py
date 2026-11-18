@@ -43,6 +43,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import _old_python
+
 LOCK = Path(".claude/workflow/lock.json")
 SETTINGS = Path(".claude/settings.json")
 SETTINGS_LOCAL = Path(".claude/settings.local.json")
@@ -99,8 +101,12 @@ NO_PYTHON_REASON = (
     "a broken checkout), so nothing can be checked; check python3 --version (3.11 or newer is needed) and "
     "python3 .claude/workflow/bin/workflow.py profile check, then start a new session"
 )
-# Both go into single-quoted sh strings.
-assert "'" not in NO_PYTHON_REASON + MISSING_KIT_REASON
+UNREADABLE_KIT_REASON = (
+    "the workflow kit is in this checkout but cannot be read, so nothing can be checked; make the kit "
+    "readable again, then start a new session"
+)
+# All three go into single-quoted sh strings.
+assert "'" not in NO_PYTHON_REASON + MISSING_KIT_REASON + UNREADABLE_KIT_REASON
 
 # WORKFLOW_ROLE, trimmed and lower-cased as roles.env_role reads it.
 _ROLE = (
@@ -112,17 +118,18 @@ _ROLE = (
 # less than Python's strip (a no-break space, a leading newline): "ticket"
 # with one is ticket to the CLI, and stays refused here.
 _MISTYPED = 'W=; case "$R" in ""|ticket|conductor|attended|*[!a-z0-9_-]*) ;; *) W=1;; esac; '
-# With WORKFLOW_ROLE unset and the kit set up: the project directory's branch
-# matching the profile's run.ticket_branch (its first `ticket_branch = "…"`
-# line, as _old_python reads it) means a ticket session, only by its branch
+# With WORKFLOW_ROLE unset and the kit set up, or there but unreadable (U):
+# the project directory's branch matching the profile's run.ticket_branch (its
+# first `ticket_branch = "…"` line, as _old_python reads it, read only when
+# the profile is a regular file, or its default otherwise) means a ticket session, only by its branch
 # (W). Without Python the event's cwd can't be read, so a worktree's own
 # branch isn't seen.
 _BRANCH = (
     'P="$CLAUDE_PROJECT_DIR/.claude/workflow/profile.toml"; '
-    'if [ -z "$R" ] && [ -f "$P" ]; then '
+    'if [ -z "$R" ] && { [ -f "$P" ] || [ -n "$U" ]; }; then '
     'B=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null); '
-    """T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P" | head -n 1); """
-    'case "$B" in HEAD|"") ;; ${T:-claude/build-*}) R=ticket; W=1;; esac; fi; '
+    """T=; if [ -f "$P" ]; then T=$(sed -n 's/^[[:space:]]*ticket_branch[[:space:]]*=[[:space:]]*["'"'"']\\([^"'"'"']*\\)["'"'"'].*/\\1/p' "$P" 2>/dev/null | head -n 1); fi; """
+    f'case "$B" in HEAD|"") ;; ${{T:-{_old_python.DEFAULT_TICKET_BRANCH}}}) R=ticket; W=1;; esac; fi; '
 )
 # Under code_writers = "ticket" (`fallback.sh --ticket-rule`, #342), a session
 # that is a ticket session only by its branch or a mistyped WORKFLOW_ROLE gets
@@ -130,6 +137,19 @@ _BRANCH = (
 _PLANNING = (
     'if [ -n "$W" ] && [ -f "${F%.py}/fallback.sh" ] && [ "$(sh "${F%.py}/fallback.sh" --ticket-rule </dev/null)" = ticket ]; '
     'then R=attended; fi; '
+)
+# The CLI not found because the deepest part of its path that is there is a
+# folder that can't be searched or a link that can't be followed is not a
+# missing kit: U says so, and the hook then refuses every tool to a
+# ticket or conductor session (with WORKFLOW_ROLE unset, a branch matching
+# run.ticket_branch as _BRANCH reads it, or a branch that can't be read) and
+# asks about every tool otherwise, without the planning fallback. A path that
+# is simply absent, under a folder that can be searched or under a file, stays
+# a missing kit.
+_UNREADABLE = (
+    'U=; if [ ! -f "$F" ]; then X=$F; '
+    'while [ -n "$X" ] && [ ! -e "$X" ] && [ ! -L "$X" ]; do case "$X" in */*) X=${X%/*};; *) X=;; esac; done; '
+    'if { [ -L "$X" ] && [ ! -e "$X" ]; } || { [ -d "$X" ] && [ ! -x "$X" ]; }; then U=1; fi; fi; '
 )
 
 
@@ -178,8 +198,13 @@ def hook_command(sub: str, plugin: bool = False) -> str:
     that is a ticket session only by its branch, or by a WORKFLOW_ROLE that
     isn't a role, gets that fallback too, as a planning session. An
     attended session's guard always exits 0. SessionStart says so to everyone
-    (#22). The CLI itself exits 0 whenever it has decided, so a non-zero exit
-    means it couldn't.
+    (#22).
+    With the kit there but unreadable, so that the CLI isn't found, the guard
+    refuses every tool to a ticket or conductor session (with WORKFLOW_ROLE
+    unset, a branch matching run.ticket_branch, or one that can't be read) and
+    asks about every tool otherwise; it never reads as a missing kit. The CLI
+    itself exits 0 whenever it has decided, so a non-zero exit means it
+    couldn't.
 
     The plugin is for attended work only: without a working python3 its guard
     never refuses every tool, and runs the fallback whatever WORKFLOW_ROLE
@@ -204,11 +229,11 @@ def hook_command(sub: str, plugin: bool = False) -> str:
         'if [ -f "$F" ] && command -v python3 >/dev/null 2>&1; then '
         """O=$(printf '%s\\n' "$E" | python3 -B "$F" hook guard) && { [ -z "$O" ] || printf '%s\\n' "$O"; exit 0; }; fi; """
     )
+    def decide(decision: str, reason: str) -> str:
+        return json.dumps(_old_python._decision(decision, reason), separators=(",", ":"))
+
     # With fallback.sh missing too (a partial copy of the kit), every tool is asked.
-    broken = json.dumps(
-        {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": BROKEN_KIT_REASON}},
-        separators=(",", ":"),
-    )
+    broken = decide("ask", BROKEN_KIT_REASON)
     fallback = (
         """if [ -f "$F" ] && [ -f "${F%.py}/fallback.sh" ]; then printf '%s\\n' "$E" | sh "${F%.py}/fallback.sh"; """
         f"""elif [ -f "$F" ]; then printf '%s\\n' '{broken}'; fi; exit 0"""
@@ -217,10 +242,7 @@ def hook_command(sub: str, plugin: bool = False) -> str:
         return run + fallback
 
     def deny(reason: str) -> str:
-        return json.dumps(
-            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}},
-            separators=(",", ":"),
-        )
+        return decide("deny", reason)
 
     restore = (
         "import json,sys;e=json.load(sys.stdin);i=e.get('tool_input') or {};"
@@ -231,7 +253,13 @@ def hook_command(sub: str, plugin: bool = False) -> str:
         run
         + _ROLE
         + _MISTYPED
-        + 'if [ -f "$F" ]; then ' + _BRANCH + _PLANNING + 'fi; '
+        + _UNREADABLE
+        + 'if [ -f "$F" ] || [ -n "$U" ]; then ' + _BRANCH + 'fi; '
+        + 'if [ -n "$U" ]; then if [ -z "$R" ] && [ -z "$B" ]; then R=ticket; fi; '
+        + 'if [ -z "$R" ] || [ "$R" = attended ]; then '
+        + f"printf '%s\\n' '{decide('ask', UNREADABLE_KIT_REASON + '.')}'; "
+        + f"else printf '%s\\n' '{decide('deny', 'Refused: ' + UNREADABLE_KIT_REASON + '.')}'; fi; exit 0; fi; "
+        + 'if [ -f "$F" ]; then ' + _PLANNING + 'fi; '
         + 'if [ -z "$R" ] || [ "$R" = attended ]; then ' + fallback + '; fi; '
         + f"if [ -f \"$F\" ]; then printf '%s\\n' '{deny('Refused: ' + NO_PYTHON_REASON + '.')}'; exit 0; fi; "
         + f"""if command -v python3 >/dev/null 2>&1 && printf '%s\\n' "$E" | python3 -c '{restore}' 2>/dev/null; then exit 0; fi; """

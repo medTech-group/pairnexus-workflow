@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from . import charter as charter_mod
+from . import issues as issues_mod
 from . import handoff, own_changes, presets as presets_mod, protection, research_pr, reviews, small, state
 from .evidence import is_full, read_headline
 from .guard import matches
@@ -362,7 +363,7 @@ def _parents(v) -> tuple[str, ...] | None:
 
 def _int(v) -> int | None:
     """A whole number GitHub gives (not a bool), else None."""
-    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+    return v if issues_mod.is_whole(v) and v >= 0 else None
 
 
 def _time(v) -> datetime | None:
@@ -393,9 +394,10 @@ def _short(sha: str | None) -> str:
 
 
 def _clean(text: str) -> str:
-    """Text from the input as a message shows it: a line break or control
-    character escaped, so it can't make a line of its own."""
-    return "".join(c if unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Zl", "Zp") else f"\\u{ord(c):04x}" for c in str(text))
+    """Text from the input as a message shows it: a line break, a control
+    character or one that can't be seen escaped, so it can't make a line of
+    its own or pass for another name (`issues.escape_unprintable`, #805)."""
+    return issues_mod.escape_unprintable(str(text))
 
 
 def _names(names) -> str:
