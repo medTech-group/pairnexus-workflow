@@ -113,6 +113,52 @@ def item_path(body: str | None) -> str | None:
     return None if m is None else (m.group(1) or "")
 
 
+# The text fields `snapshot` reads, on an issue or a pull request (#770).
+_TEXTS = ("state", "state_reason", "title", "body")
+
+
+def _whole(v) -> bool:
+    return v is None or issues_mod.is_whole(v)
+
+
+def as_read(item: dict, by_count: bool = False) -> dict:
+    """The issue or pull request as `snapshot` reads it (#770): a copy with each
+    field it reads that holds the wrong type left out, so the item reads as it
+    would without that field, never a traceback. Labels are left as they are:
+    `issues.labels_of`, which `status` reads them through, reads past a label
+    of the wrong type (#772). A `sub_issues_summary` or
+    `issue_dependencies_summary` whose count isn't a whole number is left out
+    whole (its sub-issues unknown); with `by_count`, as `workflow ready` reads
+    it (#780), only that count is left out, so a parent whose `total` is a
+    whole number stays a parent (`issues.is_build_ticket` reads `total` alone).
+    A `pull_request` of the wrong type still marks a pull request, read
+    without its details. A null reads as missing, as before, except a null
+    `pull_request`, which still marks a pull request."""
+    out = dict(item)
+    for k in _TEXTS:
+        if not isinstance(out.get(k), (str, type(None))):
+            del out[k]
+    for k, counts in (("sub_issues_summary", ("total", "completed")), ("issue_dependencies_summary", ("blocked_by",))):
+        v = out.get(k)
+        if v is None:
+            continue
+        bad = [c for c in counts if not _whole(v.get(c))] if isinstance(v, dict) else None
+        if bad is None or (bad and not by_count):
+            del out[k]
+        elif bad:
+            out[k] = {c: n for c, n in v.items() if c not in bad}
+    if not isinstance(out.get("pull_request", {}), (dict, type(None))):
+        out["pull_request"] = {}
+    head = out.get("head")
+    if isinstance(head, dict) and not isinstance(head.get("ref"), (str, type(None))):
+        out["head"] = {k: v for k, v in head.items() if k != "ref"}
+    elif not isinstance(head, (dict, type(None))):
+        del out["head"]
+    if not isinstance(out.get("draft"), (bool, type(None))):
+        del out["draft"]
+    return out
+
+
 def _open(i: dict) -> bool:
     return (i.get("state") or "open").lower() == "open"
 
@@ -161,11 +207,19 @@ def snapshot(
     if issues is None or prs is None:
         return st
     st.issues_read = True
+    # Readiness, and whether an issue is a parent, read a summary as `workflow ready`
+    # does: only its count of the wrong type left out, so a parent whose `total` is a
+    # whole number stays a parent, never a ready build ticket (#799). The sections'
+    # counts read the summary left out whole: its tickets unknown (#770). Each item is
+    # paired with its own counted read, never another item's of the same number.
+    counted, counted_prs = [as_read(i, by_count=True) for i in issues], [as_read(p, by_count=True) for p in prs]
+    issues, prs = [as_read(i) for i in issues], [as_read(p) for p in prs]
     lab = issues_mod.labels_of
     by_num = {i["number"]: i for i in issues if "pull_request" not in i}
-    for i in sorted((i for i in issues if "pull_request" not in i and _open(i)), key=lambda i: i["number"]):
+    open_issues = ((i, c) for i, c in zip(issues, counted) if "pull_request" not in i and _open(i))
+    for i, c in sorted(open_issues, key=lambda p: p[0]["number"]):
         n, title, labels, body = i["number"], i.get("title") or "", lab(i), i.get("body") or ""
-        kids = _children(i)
+        kids, counted_kids = _children(i), _children(c)
         if "workflow:run" in labels:
             st.run.append(Item(n, title))
             continue
@@ -179,10 +233,10 @@ def snapshot(
             detail = "open decisions unknown (no sub_issues_summary)" if kids is None else f"{kids[1]} open decisions"
             st.maps.append(Item(n, title, detail))
             continue
-        is_spec = "spec" in labels or title.strip().casefold().startswith("spec:")
+        is_spec = issues_mod.is_spec(i)
         path = item_path(body)
         # The item's own section, then held over it (#514), unless it already waits on a person (#577).
-        if is_spec or (kids and kids[0]):
+        if is_spec or (counted_kids and counted_kids[0]):
             kind = "" if is_spec else "parent issue, "
             if kids is None:
                 detail = "tickets unknown (no sub_issues_summary)"
@@ -220,7 +274,7 @@ def snapshot(
     # A ticket handed on is never ready, whichever section lists it: carrying it on isn't a fresh build.
     # Nor is a research issue, which is under way (#514).
     never_ready = {i["number"] for i in issues if "pull_request" not in i and lab(i) & {issues_mod.CARRY_ON_LABEL, issues_mod.RESEARCH_LABEL}}
-    for v in issues_mod.readiness(issues, prs, repo=repo, areas=areas, protected=protected):
+    for v in issues_mod.readiness(counted, counted_prs, repo=repo, areas=areas, protected=protected):
         if v.ready and v.number not in never_ready:
             st.ready.append(Item(v.number, v.title, v.area or ""))
     return st
@@ -270,6 +324,15 @@ def local_gap_lines(st: Status) -> list[str]:
 
 
 def text(st: Status) -> str:
+    """The status as text, for a terminal: in an issue's or pull request's
+    text (a title, a detail, a branch), a control character is shown as its
+    JSON escape, `\\n` or `\\u001b`, so it can't add a line or reach the
+    terminal as a code (#776), and so is a lone surrogate, `\\ud800`, since it
+    can't be printed (#774)."""
+    return issues_mod.escape_surrogates(_text(st))
+
+
+def _text(st: Status) -> str:
     if st.profile_error:
         kit, solo = "set up, but its profile has an error (kit.profile)", "unknown (the profile has an error)"
     else:
@@ -286,13 +349,14 @@ def text(st: Status) -> str:
     if not st.issues_read:
         lines.append("Issues: not read (pass --fetch, or --issues and --prs files)")
         return "\n".join(lines)
+    esc = issues_mod.escape_controls
     for key, heading in _SECTIONS:
         items = getattr(st, key)
         if not items:
             continue
         lines.append(f"{heading}: {len(items)}")
         for it in items[:8]:
-            lines.append(f"- #{it.number} {it.title}" + (f" [{it.detail}]" if it.detail else ""))
+            lines.append(f"- #{it.number} {esc(it.title)}" + (f" [{esc(it.detail)}]" if it.detail else ""))
         if len(items) > 8:
             lines.append(f"- … and {len(items) - 8} more")
     if st.kit_update_pr:

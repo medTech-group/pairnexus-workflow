@@ -5837,8 +5837,7 @@ def _bash_holds_sensitive(command: str, profile: Profile, root: Path, cwd: str |
     texts = [command, *_command_reads(segs)]
     for seg in segs:
         texts += _post_texts(seg)
-    text = "\n".join(texts)
-    return any(re.search(pat, text) for pat in profile.sensitive_patterns)
+    return _text_holds_sensitive("\n".join(texts), profile)
 
 
 def check_bash(
@@ -5977,10 +5976,9 @@ def check_bash(
         texts = [command, read()]
         for s in posts:
             texts += post_texts(s)
-        text = "\n".join(texts)
-        for pat in profile.sensitive_patterns:
-            if re.search(pat, text):
-                return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id", sensitive=True)
+        pat = profile_mod.sensitive_match("\n".join(texts), profile.sensitive_patterns)
+        if pat is not None:
+            return _deny(role, f"this would post text matching the sensitive-data pattern {pat!r}; refer to things by id", sensitive=True)
     if role in ("ticket", "conductor"):
         for s in posts:
             # In the command's texts as a whole: a seatbelt, not proof that each post carries it.
@@ -6077,15 +6075,14 @@ def check_mcp(tool: str, inp: dict, profile: Profile, role: str, root: Path) -> 
         if ref and not fnmatch.fnmatchcase(ref, profile.ticket_branch):
             return Decision("deny", f"a ticket session may only create branches matching `{profile.ticket_branch}`")
     if not name.startswith(_READ_PREFIXES) and profile.sensitive_patterns:
-        text = "\n".join(_strings(inp))
-        for pat in profile.sensitive_patterns:
-            if re.search(pat, text):
-                return _deny(
-                    role,
-                    f"this {name} would post text matching the project's sensitive-data pattern {pat!r} "
-                    f"({profile.sensitive_description or 'see profile.md'}); remove it and refer to things by id",
-                    sensitive=True,
-                )
+        pat = profile_mod.sensitive_match("\n".join(_strings(inp)), profile.sensitive_patterns)
+        if pat is not None:
+            return _deny(
+                role,
+                f"this {name} would post text matching the project's sensitive-data pattern {pat!r} "
+                f"({profile.sensitive_description or 'see profile.md'}); remove it and refer to things by id",
+                sensitive=True,
+            )
     if role in ("ticket", "conductor") and _mcp_creates_text(name, inp):
         body = inp.get("body")
         if not (isinstance(body, str) and AGENT_MARKER in body):
@@ -9815,7 +9812,7 @@ def _powershell_code(inp: dict, code: _Code, root: Path, cwd: str | os.PathLike 
 
 
 def _text_holds_sensitive(text: str, profile: Profile) -> bool:
-    return any(re.search(pat, text) for pat in profile.sensitive_patterns)
+    return profile_mod.holds_sensitive(text, profile.sensitive_patterns)
 
 
 def decide(

@@ -9,6 +9,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import issues as issues_mod
+from ._old_python import NOT_FOUND, missing  # the one check of whether a path is there, given on
 from . import presets as presets_mod
 from . import proc as proc_mod
 from . import roles as roles_mod
@@ -38,8 +40,22 @@ DEFAULT_TEST_PATHS = [
 ]
 
 
+# A control character (Unicode's Cc, `issues.has_control`) is refused in
+# project.repo, which goes into `gh api` paths and command lines (#821).
+REPO_CONTROL = "project.repo must be owner/repo, without control characters"
+
+
 class ProfileError(ValueError):
-    pass
+    """A profile the kit can't use. Its message can quote the profile's own
+    text (a table's, a suite's or a package's name), so it is held through
+    `issues.escape_unprintable`, the kit's one escape for a name: a line
+    break or an escape code in it reads `\\n` or `\\u001b`, and whoever prints
+    it (`main`'s `workflow:` line, doctor's and status's `kit.profile` line)
+    shows one plain line. Escaping again changes nothing, so a caller that
+    passes its words on with its own context after them keeps them (#824)."""
+
+    def __init__(self, message: object = "") -> None:
+        super().__init__(issues_mod.escape_unprintable(str(message)))
 
 
 # Who writes code (#338): `guard.code_writers`, "ticket" (only ticket sessions)
@@ -245,6 +261,17 @@ def project_root(start: Path | None = None) -> Path:
     return here
 
 
+def sensitive_match(text: str, patterns) -> str | None:
+    """The first of `patterns` (the profile's `[sensitive].patterns`) found
+    anywhere in `text`, else None."""
+    return next((p for p in patterns if re.search(p, text)), None)
+
+
+def holds_sensitive(text: str, patterns) -> bool:
+    """Whether `text` matches any of `patterns` (the profile's `[sensitive].patterns`)."""
+    return sensitive_match(text, patterns) is not None
+
+
 def _strs(v, where: str) -> list[str]:
     if v is None:
         return []
@@ -258,7 +285,7 @@ def _strs(v, where: str) -> list[str]:
 def _int(v, where: str, default: int, lo: int = 0, hi: int = 10_000) -> int:
     if v is None:
         return default
-    if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
+    if not issues_mod.is_whole(v) or not lo <= v <= hi:
         raise ProfileError(f"{where}: expected a whole number from {lo} to {hi}")
     return v
 
@@ -384,6 +411,8 @@ def parse(data: dict, root: Path) -> Profile:
         raise ProfileError("project.name is required")
     if not isinstance(repo, str) or repo.count("/") != 1:
         raise ProfileError("project.repo must be owner/repo")
+    if issues_mod.has_control(repo):  # a NUL ended `subprocess.run(["gh", …])` (#821); #327 widens this to its owner/name rule
+        raise ProfileError(REPO_CONTROL)
     owner = proj.get("owner") or ""
     if not isinstance(owner, str) or (owner and not OWNER.match(owner)):
         raise ProfileError("project.owner must be a GitHub login (letters, digits and hyphens), without the @")
@@ -585,7 +614,7 @@ def _read_experience_file(root) -> tuple[str | None, str]:
     try:
         lines = data.decode("utf-8").strip().splitlines()
     except UnicodeDecodeError:
-        return None, "it isn't UTF-8 text"
+        return None, f"it {NOT_UTF8}"
     if not lines:
         return None, "it is empty"
     if len(lines) > 1:
@@ -623,17 +652,84 @@ def resolve_experience(root: Path | None, profile_value=None, environ=None) -> E
     return Experience(None, "unknown", warnings)
 
 
+# ---------- a file that can't be read (#836) ----------
+#
+# The one check and wording of a file the kit reads that it can't read, worded
+# to follow the file's name: `load` says "<the profile's path> isn't a file",
+# doctor "it isn't a file". `load`, `doctor._file` and `doctor._read_text` all
+# read through `file_problem`.
+
+NOT_A_FILE = "isn't a file"
+NOT_UTF8 = "isn't UTF-8 text"
+
+
+def cant_be_read(e: Exception) -> str:
+    """The words for a file (or standard input) an error stops the kit
+    reading: the error's type, never its message, which may name an absolute
+    path."""
+    return f"can't be read ({type(e).__name__})"
+
+
+def file_problem(path: Path) -> str | None:
+    """Why `path` can't be read as a regular file, or None when it can or is
+    missing: `NOT_A_FILE` for a directory or a pipe, which is never opened (a
+    pipe would block the read), else `cant_be_read`'s words when even asking
+    fails. Never raises."""
+    try:
+        if path.exists() and not path.is_file():
+            return NOT_A_FILE
+    except (OSError, ValueError) as e:
+        return cant_be_read(e)
+    return None
+
+
+def read_file(path: Path) -> tuple[str | None, str | None]:
+    """(the file's text, None), with any byte-order mark kept for the caller
+    to judge; (None, why it can't be read): `file_problem`'s words, `NOT_UTF8`
+    or `cant_be_read`'s; (None, None) when it is missing. Never raises, and
+    never opens a directory or a pipe."""
+    why = file_problem(path)
+    if why:
+        return None, why
+    try:
+        if not path.exists():
+            return None, None
+        return path.read_text(encoding="utf-8"), None
+    except UnicodeDecodeError:
+        return None, NOT_UTF8
+    except (OSError, ValueError) as e:
+        return None, cant_be_read(e)
+
+
+def unreadable(e: OSError) -> ProfileError:
+    """`load`'s refusal of a profile file an `OSError` stops it reading: the
+    profile's path in the project and `cant_be_read`'s words, never the
+    absolute path (#829). `load` gives it when asking whether the profile is
+    there fails (`missing`), and `cli._load` for any other `OSError` `load`
+    still lets through (#837)."""
+    return ProfileError(f"{PROFILE_PATH} {cant_be_read(e)}")
+
+
 def load(root: Path | None = None, required: bool = True) -> Profile | None:
     root = root or project_root()
     path = root / PROFILE_PATH
-    if not path.exists():
+    # Each refusal names the profile by its path in the project, never the
+    # absolute one, as `workflow status` and `workflow doctor` say it (#829).
+    try:
+        gone = missing(path)
+    except OSError as e:  # there, but can't be read: never read as missing
+        raise unreadable(e) from None
+    text, why = (None, None) if gone else read_file(path)
+    if why:
+        raise ProfileError(f"{PROFILE_PATH} {why}")
+    if text is None:  # missing, or gone since `missing`
         if required:
             raise ProfileError(f"no profile at {path}; run the setup-workflow skill first")
         return None
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
-        raise ProfileError(f"{path}: {e}") from e
+        raise ProfileError(f"{PROFILE_PATH}: {e}") from e
     return parse(data, root)
 
 

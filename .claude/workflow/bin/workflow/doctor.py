@@ -262,8 +262,9 @@ def _dotted(v) -> str:
 
 def _printable(text: str) -> str:
     """Text with what can't be printed (a control character, half a
-    surrogate pair, an invisible one) escaped as `\\uXXXX`."""
-    return "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in text)
+    surrogate pair, an invisible one) escaped: `issues.escape_unprintable`,
+    the kit's one list (#805)."""
+    return issues_mod.escape_unprintable(text)
 
 
 def _shown(value: str, most: int = 40) -> str:
@@ -272,33 +273,28 @@ def _shown(value: str, most: int = 40) -> str:
     return v if len(v) <= most else v[:most] + "…"
 
 
+def _at(root: Path, rel: str | Path) -> Path:
+    """A path in the checkout (`rel` from its root, or absolute)."""
+    return Path(rel) if Path(rel).is_absolute() else root / rel
+
+
 def _file(root: Path, rel: str | Path) -> tuple[Path, str | None]:
     """A path in the checkout, and why it can't be read as a regular file
-    (None when it can, or is missing). A pipe or a directory is never opened."""
-    path = Path(rel) if Path(rel).is_absolute() else root / rel
-    try:
-        if path.exists() and not path.is_file():
-            return path, "it isn't a file"
-    except OSError as e:
-        return path, f"it can't be read ({type(e).__name__})"
-    return path, None
+    (None when it can, or is missing), in `profile.file_problem`'s words. A
+    pipe or a directory is never opened."""
+    path = _at(root, rel)
+    why = profile_mod.file_problem(path)
+    return path, why and f"it {why}"
 
 
 def _read_text(root: Path, rel: str | Path) -> tuple[str | None, str | None]:
     """A text file's contents (a byte-order mark left out), and why it can't
-    be read: (None, None) when it is missing. Never raises, and never blocks
-    on a pipe."""
-    path, err = _file(root, rel)
-    if err:
-        return None, err
-    try:
-        if not path.exists():
-            return None, None
-        return path.read_text(encoding="utf-8").removeprefix("\ufeff"), None
-    except UnicodeDecodeError:
-        return None, "it isn't UTF-8 text"
-    except (OSError, ValueError) as e:
-        return None, f"it can't be read ({type(e).__name__})"
+    be read, in `profile.read_file`'s words: (None, None) when it is missing.
+    Never raises, and never blocks on a pipe."""
+    text, why = profile_mod.read_file(_at(root, rel))
+    if why:
+        return None, f"it {why}"
+    return (None if text is None else text.removeprefix("\ufeff")), None
 
 
 def _parse_json(text: str, loads=json.loads):
@@ -1376,7 +1372,7 @@ def _gh(i: Inputs, path: str, deadline: float, flag: str, paginate: bool = False
         n = round(timeout)
         return _Answer(why=Words(f"GitHub didn't answer within {n} second{'' if n == 1 else 's'}{budget}", f"`gh api {shown}` timed out after {timeout:.0f} s{budget}"), fix=again)
     if ran.state != "ok":
-        said = err if ran.state == "failed" else "its answer isn't UTF-8 text"
+        said = err if ran.state == "failed" else f"its answer {profile_mod.NOT_UTF8}"
         return _Answer(why=Words(f"GitHub answered `gh` with an error: {said}", f"`gh api {shown}` failed: {said}"), fix=again)
     try:
         values = posts_mod.decode_values(ran.out)
@@ -1453,9 +1449,9 @@ def _stdin(what: str = "GitHub's answer"):
         if not text.strip():
             return None, "standard input was empty"
     except UnicodeDecodeError:
-        return None, "it isn't UTF-8 text"
+        return None, f"it {profile_mod.NOT_UTF8}"
     except (OSError, ValueError, AttributeError) as e:
-        return None, f"standard input can't be read ({type(e).__name__})"
+        return None, f"standard input {profile_mod.cant_be_read(e)}"
     return _parse_json(text, protection_mod.loads)
 
 
@@ -1472,7 +1468,7 @@ def _rulesets(i: Inputs, deadline: float) -> tuple[_Answer, bool]:
         return (_Answer([]) if plan else listed), plan
     flat = [x for page in listed.value for x in (page if isinstance(page, list) else [page])]
     ids = [x.get("id") if isinstance(x, dict) else None for x in flat]
-    if not all(isinstance(n, int) and not isinstance(n, bool) for n in ids):
+    if not all(issues_mod.is_whole(n) for n in ids):
         return _Answer(why=Words("GitHub's list of rulesets couldn't be read", "`gh api`'s list of rulesets has an entry without an id"), fix=_again()), False
     full = []
     for n in ids:
@@ -1931,7 +1927,7 @@ def _open_prs(i: Inputs) -> _Answer:
                 prs = estimate_mod._flatten(answer.value)
             except RecursionError:  # nested deeper than any list of pages
                 prs = [None]
-            if all(isinstance(pr, dict) and isinstance(pr.get("number"), int) and not isinstance(pr.get("number"), bool) and pr["number"] > 0 for pr in prs):
+            if all(isinstance(pr, dict) and issues_mod.is_whole(pr.get("number")) and pr["number"] > 0 for pr in prs):
                 answer = _Answer(prs)
             else:
                 answer = _Answer(why=Words(
@@ -2227,7 +2223,7 @@ def check_ruleset_rules(i: Inputs) -> list[Line]:
         )))
     prs = _rules(rep, "pull_request")
     counts = [p.get("required_approving_review_count") for p in prs if "required_approving_review_count" in p]
-    unread = [c for c in counts if not isinstance(c, int) or isinstance(c, bool) or c < 0]
+    unread = [c for c in counts if not issues_mod.is_whole(c) or c < 0]
     most = max((c for c in counts if c not in unread), default=0)
     if unread:
         lines.append(Line(g, "github.approvals", "cant_check", Words(
@@ -2531,7 +2527,7 @@ def _items(value, key: str) -> list[dict] | None:
     if not all(isinstance(p, dict) and isinstance(p.get(key), list) for p in pages):
         return None
     items = [x for p in pages for x in p[key]]
-    totals = [p["total_count"] for p in pages if isinstance(p.get("total_count"), int) and not isinstance(p.get("total_count"), bool)]
+    totals = [p["total_count"] for p in pages if issues_mod.is_whole(p.get("total_count"))]
     if totals and len(items) < max(totals):
         return None
     return items if all(isinstance(x, dict) for x in items) else None
@@ -3264,17 +3260,13 @@ def _runs(i: Inputs) -> _Answer:
     return i._runs
 
 
-def _label_names(issue: dict) -> set[str]:
-    """An issue's labels, casefolded, as GitHub matches them: objects with a
-    name, or names."""
-    labels = issue.get("labels")
-    names = [x.get("name") if isinstance(x, dict) else x for x in labels] if isinstance(labels, list) else []
-    return {x.casefold() for x in names if isinstance(x, str)}
+# An issue's labels, read through the one shared reader (#778).
+_label_names = issues_mod.labels_of
 
 
 def _number(issue: dict) -> int | None:
     n = issue.get("number")
-    return n if isinstance(n, int) and not isinstance(n, bool) else None
+    return n if issues_mod.is_whole(n) else None
 
 
 def _read_runs(i: Inputs) -> _Answer:
